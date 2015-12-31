@@ -14,6 +14,7 @@ get_ipython().run_cell_magic('javascript', '', "IPython.keyboard_manager.command
 # In[ ]:
 
 from collections import namedtuple, Counter, defaultdict, OrderedDict
+from functools import wraps
 from glob import glob
 import operator as op
 from os.path import join
@@ -159,11 +160,6 @@ Counter(filter(lambda x: not re.match(r'[\dA-Za-z \."\'\-\(\);:!\?,\n]', x), bks
 
 # In[ ]:
 
-
-
-
-# In[ ]:
-
 Complexity
 - avg word length (syllables?)
 - avg sentence length
@@ -207,18 +203,13 @@ bktks = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bks.tx
 
 # In[ ]:
 
-from functools import wraps
-
-
-# In[ ]:
-
 def tobooks(f, bks=bktks):
     return pd.concat([f(v, i) for i, v in bks.items()])
 
 def booker(f: 'toks -> [str]') -> '(toks, int) -> DataFrame':
     @wraps(f)
     def tobookdf(toks, bknum):
-        df = DataFrame(f(toks))
+        df = DataFrame(f(toks), columns=['Val'])
         df['Book'] = bknum
         return df
     return tobookdf
@@ -257,22 +248,65 @@ def reg_words(parsed):
     return [w for w in wds if len(w) > 3 and (w.lower() not in stops) and not w[0].isupper()]
 
 def wd_freqs(parsed):
-    return Series(Counter(reg_words(parsed))).sort_values(ascending=False)
+    vcs = Series(Counter(reg_words(parsed))).sort_values(ascending=False)
+    return vcs
+    return vcs[vcs < 20]
 
 
 # In[ ]:
 
-uncwds = over_books(wd_freqs)
+uncwds = over_books(wd_freqs).reset_index(drop=1)
 
 
 # In[ ]:
 
-uncwds.groupby('Book')[0].
+# for k, gdf in uncwds.groupby(['Book', 'Val']):
+for gbk, gdf in uncwds.groupby(['Book', ]):
+    break
+
+
+# In[ ]:
+
+len(gdf)
+
+
+# The folllowing shows the relative word frequency distribution. The first two numbers in the first column indicate that for book one, words appearing only 1 time account for 45.2% of all the word occurences, while words appearing twice account for 16.9%. If anything, it appears that the share of rare words (those appearing only once or twice) decrease with each book, rather than increase.
+
+# In[ ]:
+
+k = 10
+wordfreq = DataFrame({bknum: gdf.Val.value_counts(normalize=1)[:k]
+            for bknum, gdf in uncwds.groupby(['Book'])})
+wordfreq = (wordfreq * 100).round(1)
+wordfreq.columns.name = 'Book'
+wordfreq.index.name = 'Word_freq'
+wordfreq
+
+
+# In[ ]:
+
+
+gdf.Val.value_counts(normalize=1)[:k]
+
+
+# In[ ]:
+
+uncwds.groupby(['Book', 'Val']).size()
+
+
+# In[ ]:
+
+uncwds.Book.value_counts(normalize=0)
 
 
 # In[ ]:
 
 uncwds[:5]
+
+
+# In[ ]:
+
+1
 
 
 # In[ ]:
@@ -341,7 +375,10 @@ sns.boxplot(x='Book', y=0, data=sent_lens)
 # In[ ]:
 
 plt.figure(figsize=(16, 10))
-sns.boxplot(x='Book', y=0, data=uncwds)
+pt = sns.boxplot
+pt = sns.violinplot
+pt(x='Book', y=0, data=uncwds)
+# plt.ylim(0, 20)
 
 
 # In[ ]:
