@@ -1,0 +1,16 @@
+name: hp
+dependencies:
+- openssl=1.0.2d=0
+- pip
+- pip:
+  - "ipython[notebook]<4"
+  - toolz
+  #- pyth
+- python=3.5
+- spacy
+- pandas
+- gensim
+
+
+
+
