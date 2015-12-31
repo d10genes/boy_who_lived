@@ -10,6 +10,7 @@ dependencies:
 - spacy
 - pandas
 - gensim
+- seaborn
 
 
 

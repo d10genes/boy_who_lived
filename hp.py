@@ -41,6 +41,13 @@ p = print
 
 # In[ ]:
 
+# with open('src/nltk_stopwords.txt', 'r') as f:
+with open('src/stops.txt', 'r') as f:
+    stops = set(l for l in f.read().splitlines() if l and not l.startswith('#'))
+
+
+# In[ ]:
+
 Chapter = namedtuple('Chapter', 'num title text')
 
 
@@ -54,18 +61,49 @@ class Book(object):
             self.txts[n] = chap.text
         txt = reduce(op.add, self.txts.values())
         self.txt = clean_text(txt)
-        
+
+
 class BookSeries(object):
     def __init__(self, n=7):
-        self.chapters = chapters
-        self.title = title
+        bks = {i: parsebook(i, vb=1) for i in range(1, n + 1)}
+        
         self.txts = OrderedDict()
-        for n, chap in sorted(chapters.items()):
-            setattr(self, 't{}'.format(n), chap.text)
-            self.txts[n] = chap.text
+        for n, bk in sorted(bks.items()):
+            setattr(self, 'b{}'.format(n), bk.txt)
+            self.txts[n] = bk.txt
         txt = reduce(op.add, self.txts.values())
         self.txt = clean_text(txt)
 
+
+# In[ ]:
+
+bookpat = re.compile(r'''\A(?P<title>.+)
+(?!(.+)+?)
+(?P<body>(Chapter 1)\n+(.+\n+)+)''')
+
+bookpat = re.compile(r'''\A(?P<title>.+)
+\n*
+(?:(?:.+\n+)+?)
+(?P<body>
+    (Chapter\ 1)
+    \n+
+    (.+\n*)+
+)''', re.VERBOSE)
+
+chappat = re.compile(r'''(Chapter (\d+)\n+((?:.+\n+)+))+''')
+chapsep = re.compile(r'Chapter (\d+)\n(.+)\n+')
+# m = bookpat.match(t)
+# gd = m.groupdict()
+# title = gd['title']
+# body = gd['body']
+# gd
+# m
+# m.groupdict()
+
+
+# book = {int(chnum): Chapter(int(chnum), title, text) for chnum, title, text in z.partition(3, chs)}
+# bk = Book(book)
+# book
 
 # In[ ]:
 
@@ -88,55 +126,6 @@ def parsebook(fn="src/txt/hp1.txt", vb=False):
     return Book(booktitle, book)
 
 
-# In[ ]:
-
-n = 7
-bks = {i: parsebook(i, vb=1) for i in range(1, n + 1)}
-
-
-# In[ ]:
-
-bookpat.search(txt)
-
-
-# In[ ]:
-
-txt[:2000]
-
-
-# In[ ]:
-
-print(txt[:2000])
-
-
-# In[ ]:
-
-bks
-
-
-# In[ ]:
-
-bookpat = re.compile(r'''\A(?P<title>.+)
-(?!(.+)+?)
-(?P<body>(Chapter 1)\n+(.+\n+)+)''')
-chappat = re.compile(r'''(Chapter (\d+)\n+((?:.+\n+)+))+''')
-chapsep = re.compile(r'Chapter (\d+)\n(.+)\n+')
-# m = bookpat.search(t)
-# gd = m.groupdict()
-# title = gd['title']
-# body = gd['body']
-# gd
-
-
-# book = {int(chnum): Chapter(int(chnum), title, text) for chnum, title, text in z.partition(3, chs)}
-# bk = Book(book)
-# book
-
-# In[ ]:
-
-
-
-
 def clean_text(t):
     reps = {
         '’': "'",
@@ -153,7 +142,9 @@ def clean_text(t):
     t = reduce(rep, reps.items(), t)
     return t
 
-bk = parsebook()
+# bk = parsebook()
+bks = BookSeries(5)
+# bk = bks.b1
 
 
 # In[ ]:
@@ -163,7 +154,12 @@ print(bk.txt[:2000])
 
 # In[ ]:
 
-Counter(filter(lambda x: not re.match(r'[\dA-Za-z \."\'\-\(\);:!\?,\n]', x), bk.txt))
+Counter(filter(lambda x: not re.match(r'[\dA-Za-z \."\'\-\(\);:!\?,\n]', x), bks.b1))
+
+
+# In[ ]:
+
+
 
 
 # In[ ]:
@@ -180,20 +176,269 @@ Characters/Word: 4.4 | Words/Sentence: 18.4
 
 # In[ ]:
 
+from pandas import DataFrame, Series
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
 
+pd.options.display.notebook_repr_html = False
+pd.options.display.width = 120
+get_ipython().magic('matplotlib inline')
 
 
 # In[ ]:
 
 import spacy.parts_of_speech as ps
 import spacy.en
+from spacy.en import English
 
-nlp = spacy.en.English()
+nlp = English()
 
 
 # In[ ]:
 
-tokens = nlp(bk.txt, tag=True, parse=False, entity=True)
+tokens = nlp(bks.b1, tag=True, parse=True, entity=True)
+
+
+# In[ ]:
+
+bktks = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bks.txts.items()}
+
+
+# In[ ]:
+
+from functools import wraps
+
+
+# In[ ]:
+
+def tobooks(f, bks=bktks):
+    return pd.concat([f(v, i) for i, v in bks.items()])
+
+def booker(f: 'toks -> [str]') -> '(toks, int) -> DataFrame':
+    @wraps(f)
+    def tobookdf(toks, bknum):
+        df = DataFrame(f(toks))
+        df['Book'] = bknum
+        return df
+    return tobookdf
+    
+over_books = z.comp(tobooks, booker)
+
+sent_lens = booker(lambda parsed: [spanlen(sent) for sent in parsed.sents])
+wd_lens = booker(lambda parsed: [len(tok) for tok in parsed if len(tok) > 1])
+spanlen = lambda span: len([wd for wd in span if len(wd) > 1])
+
+
+# In[ ]:
+
+wd_len = tobooks(wd_lens)
+wd_len.groupby('Book')[0].agg(['mean', 'std'])
+
+
+# In[ ]:
+
+sent_len = tobooks(sent_lens)
+sent_len.groupby('Book')[0].agg(['mean', 'std'])
+
+
+# - There doesn't seem to be a discernible difference in the average word length between the books. This could be because even complex language is largely composed of shorter, commoner words, highlighted by rarer, more complex words. A way to test this could be to somehow get a measure of the frequency of rarer words
+
+# In[ ]:
+
+tt = bktks[1]
+
+
+# In[ ]:
+
+def reg_words(parsed):
+    "Non-capitalized words > 3 chars long that aren't stopwords"
+    wds = [tok.string.rstrip() for tok in parsed]
+    return [w for w in wds if len(w) > 3 and (w.lower() not in stops) and not w[0].isupper()]
+
+def wd_freqs(parsed):
+    return Series(Counter(reg_words(parsed))).sort_values(ascending=False)
+
+
+# In[ ]:
+
+uncwds = over_books(wd_freqs)
+
+
+# In[ ]:
+
+uncwds.groupby('Book')[0].
+
+
+# In[ ]:
+
+uncwds[:5]
+
+
+# In[ ]:
+
+reg_words
+
+
+# In[ ]:
+
+wd_freqs(tt)
+
+
+# In[ ]:
+
+vcs = Series(Counter(reg_words(tt))).sort_values(ascending=False)
+bm = vcs.index.map(lambda x: len(x) > 3 and (x.lower() not in stops) and not x[0].isupper())
+vcs = vcs[bm]
+
+
+# In[ ]:
+
+R = 19
+DataFrame(list(z.partition(R, vcs.index[:R*20])))
+
+
+# In[ ]:
+
+# Longest words
+Series([tok.string.strip() for bk in bktks.values() for tok in bk if len(tok) > 20]).value_counts(normalize=0)
+
+
+# In[ ]:
+
+sent_lens = pd.concat([sent_lens(v, i) for i, v in bktks.items()])
+
+
+# In[ ]:
+
+# Longest sentences
+Series().value_counts(normalize=0)
+
+
+# In[ ]:
+
+for s in [sent for bk in bktks.values() for sent in bk.sents if spanlen(sent) > 200]:
+    print(s, end='\n=======\n')
+
+
+# In[ ]:
+
+[tok for tok in bktks[5] if len(tok) > 40]
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 10))
+sns.boxplot(x='Book', y=0, data=wd_lens)
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 10))
+sns.boxplot(x='Book', y=0, data=sent_lens)
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 10))
+sns.boxplot(x='Book', y=0, data=uncwds)
+
+
+# In[ ]:
+
+sent_lens.groupby('Book')[0].median()
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+sent_lens
+
+
+# In[ ]:
+
+z.valmap()
+
+
+# In[ ]:
+
+def 
+
+
+# In[ ]:
+
+DataFrame(z.valmap(sent_lens, bktks))
+
+
+# In[ ]:
+
+bktks[1]
+
+
+# In[ ]:
+
+sent_lens(tks)
+
+
+# In[ ]:
+
+span.end - span.start
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+len(wd)
+
+
+# In[ ]:
+
+for wd in list(span):
+    wd
+
+
+# In[ ]:
+
+for span in tokens.sents:
+    break
+
+
+# In[ ]:
+
+span.text_with_ws
+
+
+# In[ ]:
+
+tokens.
+
+
+# In[ ]:
+
+len(list(tokens.sents))
+
+
+# In[ ]:
+
+span.end
+
+
+# In[ ]:
+
+[tokens[i] for i in range(span.start, span.end)]
+
+
+# In[ ]:
+
+span.start
 
 
 # In[ ]:
