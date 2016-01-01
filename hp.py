@@ -14,13 +14,19 @@ get_ipython().run_cell_magic('javascript', '', "IPython.keyboard_manager.command
 # In[ ]:
 
 from collections import namedtuple, Counter, defaultdict, OrderedDict
-from functools import wraps
+from functools import wraps, partial
 from glob import glob
+import numpy as np
 import operator as op
+from operator import itemgetter as itg, attrgetter as prop, methodcaller as mc
 from os.path import join
 import re
+from scipy import stats
 import toolz.curried as z
+import warnings
 
+
+warnings.filterwarnings("ignore")
 p = print
 
 
@@ -145,6 +151,7 @@ def clean_text(t):
 
 # bk = parsebook()
 bks = BookSeries(5)
+bksall = BookSeries(7)
 # bk = bks.b1
 
 
@@ -199,6 +206,7 @@ tokens = nlp(bks.b1, tag=True, parse=True, entity=True)
 # In[ ]:
 
 bktks = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bks.txts.items()}
+bktksall = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bksall.txts.items()}
 
 
 # In[ ]:
@@ -214,7 +222,7 @@ def booker(f: 'toks -> [str]') -> '(toks, int) -> DataFrame':
         return df
     return tobookdf
     
-over_books = z.comp(tobooks, booker)
+over_books = z.comp(partial(tobooks, bks=bktksall), booker)
 
 sent_lens = booker(lambda parsed: [spanlen(sent) for sent in parsed.sents])
 wd_lens = booker(lambda parsed: [len(tok) for tok in parsed if len(tok) > 1])
@@ -223,14 +231,14 @@ spanlen = lambda span: len([wd for wd in span if len(wd) > 1])
 
 # In[ ]:
 
-wd_len = tobooks(wd_lens)
-wd_len.groupby('Book')[0].agg(['mean', 'std'])
+wd_len = tobooks(wd_lens, bks=bktksall)
+wd_len.groupby('Book')['Val'].agg(['mean', 'median', 'std'])
 
 
 # In[ ]:
 
-sent_len = tobooks(sent_lens)
-sent_len.groupby('Book')[0].agg(['mean', 'std'])
+sent_len = tobooks(sent_lens, bks=bktksall)
+sent_len.groupby('Book')['Val'].agg(['mean', 'median', 'std'])
 
 
 # - There doesn't seem to be a discernible difference in the average word length between the books. This could be because even complex language is largely composed of shorter, commoner words, highlighted by rarer, more complex words. A way to test this could be to somehow get a measure of the frequency of rarer words
@@ -244,7 +252,8 @@ tt = bktks[1]
 
 def reg_words(parsed):
     "Non-capitalized words > 3 chars long that aren't stopwords"
-    wds = [tok.string.rstrip() for tok in parsed]
+    wds = [tok.orth_ for tok in parsed]
+    #wds = [tok.string.rstrip() for tok in parsed]
     return [w for w in wds if len(w) > 3 and (w.lower() not in stops) and not w[0].isupper()]
 
 def wd_freqs(parsed):
@@ -253,6 +262,8 @@ def wd_freqs(parsed):
     return vcs[vcs < 20]
 
 
+# The folllowing shows the relative word frequency distribution. The first two numbers in the first column indicate that for book one, words appearing only 1 time account for 45.2% of all the word occurences, while words appearing twice account for 16.9%. If anything, it appears that the share of rare words (those appearing only once or twice) decrease with each book, rather than increase.
+
 # In[ ]:
 
 uncwds = over_books(wd_freqs).reset_index(drop=1)
@@ -260,27 +271,255 @@ uncwds = over_books(wd_freqs).reset_index(drop=1)
 
 # In[ ]:
 
-# for k, gdf in uncwds.groupby(['Book', 'Val']):
-for gbk, gdf in uncwds.groupby(['Book', ]):
+k = 10
+wdfreq = DataFrame({bknum: gdf.Val.value_counts(normalize=1)[:k]
+            for bknum, gdf in uncwds.groupby(['Book'])})
+wdfreq = (wdfreq * 100).round(1)
+wdfreq.columns.name, wdfreq.index.name = 'Book', 'Word_freq'
+wdfreq
+
+
+# The cumulative share of words appearing 10 times or less also doesn't seem to indicate an increasing share of uncommon words, and if anything points to uncommon words being used more in the first three books, and deacreasing for the last four.
+# 
+# **artifact of fewer pages**?
+
+# In[ ]:
+
+wdfreq.apply(mc('cumsum')).ix[10].plot()
+
+
+# This, however, only counts words that are rare within the context of this book. spaCy provides a log-probability score for each parsed word, based on its frequency in external corpora. These will be negative numbers such that a lower score indicates that a word is less common.
+
+# In[ ]:
+
+probs = lambda x: [tok.prob for tok in x if tok.is_lower]
+# probs = listify(z.map(prop('prob')))
+prob_books = over_books(probs)
+# probs = z.comp(list, z.map)(itg('prob'))
+
+
+# In[ ]:
+
+def percentile(q: float) -> "[float] -> int":
+    def f(s):
+        return np.percentile(s, q)
+    f.__name__ = 'perc_{}'.format(q)
+    return f
+
+
+# In[ ]:
+
+_probstats = prob_books.groupby('Book').Val.agg(['mean', 'std', 'median', percentile(5), percentile(25), ])
+_probstats
+
+
+# In[ ]:
+
+_probstats[['perc_5', 'perc_25', 'median', 'mean']].plot();
+
+
+# In[ ]:
+
+Summarizing the basic statistics of the uncommonness of the words, we see a slight dip between the first and second books
+
+
+# In[ ]:
+
+prob_books[:3]
+
+
+# In[ ]:
+
+probs(bktks[2])
+
+
+# In[ ]:
+
+v = prob_books.query('Val < -15.2 & Val > -16 & Book == 2').Val
+v.value_counts(normalize=0)
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 10))
+pt = sns.boxplot
+pt = sns.violinplot
+pp = prob_books.query('Val < -14')
+pt(x='Book', y='Val', data=pp)
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 10))
+
+for k, gdf in prob_books.groupby('Book'):
+    gdf.query('Val < -8').Val.hist(bins=200, alpha=.2, normed=True)
+    
+    if k > 6:
+        break
+        
+plt.legend(range(1, 6))
+
+
+# In[ ]:
+
+newix = [range(length) for bk, length in prob_books.Book.value_counts(normalize=0).sort_index().items()]
+pb2 = prob_books.copy()
+pb2['Ix2'] = np.concatenate(newix)
+
+
+# In[ ]:
+
+pb2.pivot(index='Ix2', columns='Book', values='Val')
+
+
+# In[ ]:
+
+prob_books[:5]
+
+
+# In[ ]:
+
+prob_books.unstack()
+
+
+# In[ ]:
+
+def plot_cumsum(s, **kw):
+    cmsm = (s.sort_values(ascending=True)
+            .reset_index().reset_index()
+            .set_index('Val', drop=False)['level_0'].cumsum())
+    cmsm /= cmsm.max()
+    cmsm.plot()
+
+
+# In[ ]:
+
+gdf.Val.sort_values(ascending=True).describe()
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 10))  # 196000
+g = sns.FacetGrid(prob_books[:].query('Val < -14'), row="Book", aspect=8, size=2)
+g.map(plot_cumsum, 'Val'); None
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 10))  # 196000
+g = sns.FacetGrid(prob_books[:].query('Val < -8'), row="Book", aspect=8, size=2)
+g.map(plt.hist, 'Val', normed=True, bins=200); None
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+prob_books.Val.kurtosis()
+
+
+# In[ ]:
+
+
+for k, gdf in prob_books.groupby('Book'):
+    gdf.query('Val < -8').Val.hist(bins=200, alpha=.2, normed=True)
+    
+    if k > 6:
+        break
+        
+plt.legend(range(1, 6))
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+# pbs = probs(tokens)
+pbs = prob_books(bktks)
+
+
+# In[ ]:
+
+map(z.comp(str.strip, str), bktks[3])
+
+
+# In[ ]:
+
+get_words = listify(z.map(z.comp(str.strip, str)))
+
+
+# In[ ]:
+
+_tks = bktks[2]
+pbdf = (DataFrame(zip(probs(_tks), get_words(_tks)))
+        .sort_values(0, ascending=False)
+        .rename(columns={0: 'Prob', 1: 'Word'})
+       .assign(Prob=lambda x: x.Prob.round(3)))
+
+
+# In[ ]:
+
+# pbdf.query('Prob == -15.516')  # .Word.value_counts(normalize=0)
+pbdf.query('Prob == -10.963').Word.value_counts(normalize=0)
+
+
+# In[ ]:
+
+pbdf.query('Prob < -8 & Prob > -16').Prob.value_counts(normalize=0)
+
+
+# In[ ]:
+
+pbdf.query('Prob < -15.2 & Prob > -16').Prob.value_counts(normalize=0)
+
+
+# In[ ]:
+
+get_ipython().system('open /tmp/x.csv')
+
+
+# In[ ]:
+
+import numpy.random as nr
+import pandas as pd
+nr.seed(10)
+a = nr.randint(0, 20, (2, 3))
+df = pd.DataFrame(a)
+df
+
+
+# In[ ]:
+
+df.index.name = 'A0'
+df.columns.name = 'A1'
+
+
+# In[ ]:
+
+get_ipython().magic('pinfo df.rename')
+
+
+# In[ ]:
+
+This count is only a 
+
+
+# In[ ]:
+
+for tok in tokens:
     break
 
 
 # In[ ]:
 
-len(gdf)
-
-
-# The folllowing shows the relative word frequency distribution. The first two numbers in the first column indicate that for book one, words appearing only 1 time account for 45.2% of all the word occurences, while words appearing twice account for 16.9%. If anything, it appears that the share of rare words (those appearing only once or twice) decrease with each book, rather than increase.
-
-# In[ ]:
-
-k = 10
-wordfreq = DataFrame({bknum: gdf.Val.value_counts(normalize=1)[:k]
-            for bknum, gdf in uncwds.groupby(['Book'])})
-wordfreq = (wordfreq * 100).round(1)
-wordfreq.columns.name = 'Book'
-wordfreq.index.name = 'Word_freq'
-wordfreq
+tok.prob
 
 
 # In[ ]:
