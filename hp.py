@@ -17,6 +17,7 @@ from collections import namedtuple, Counter, defaultdict, OrderedDict
 from functools import wraps, partial
 from glob import glob
 import numpy as np
+from itertools import count
 import operator as op
 from operator import itemgetter as itg, attrgetter as prop, methodcaller as mc
 from os.path import join
@@ -175,7 +176,7 @@ Complexity
 Characters/Word: 4.4 | Words/Sentence: 18.4
 
 
-# # Text
+# # Parse Text
 
 # In[ ]:
 
@@ -279,13 +280,13 @@ wdfreq.columns.name, wdfreq.index.name = 'Book', 'Word_freq'
 wdfreq
 
 
-# The cumulative share of words appearing 10 times or less also doesn't seem to indicate an increasing share of uncommon words, and if anything points to uncommon words being used more in the first three books, and deacreasing for the last four.
+# The cumulative share of words appearing 10 times or less also doesn't seem to indicate an increasing share of uncommon words, and if anything points to uncommon words being used more in the first three books, and deacreasing for the last four. (The following graph should be interpreted to say that, for example, 90% of the words in the first book are those that appear fewer than 11 times, while 86% of the words in book 5 occur fewer than 11 times).
 # 
 # **artifact of fewer pages**?
 
 # In[ ]:
 
-wdfreq.apply(mc('cumsum')).ix[10].plot()
+wdfreq.apply(mc('cumsum')).ix[10].plot(title='Share of words in each book that appear 10 times or less');
 
 
 # This, however, only counts words that are rare within the context of this book. spaCy provides a log-probability score for each parsed word, based on its frequency in external corpora. These will be negative numbers such that a lower score indicates that a word is less common.
@@ -293,9 +294,7 @@ wdfreq.apply(mc('cumsum')).ix[10].plot()
 # In[ ]:
 
 probs = lambda x: [tok.prob for tok in x if tok.is_lower]
-# probs = listify(z.map(prop('prob')))
 prob_books = over_books(probs)
-# probs = z.comp(list, z.map)(itg('prob'))
 
 
 # In[ ]:
@@ -306,21 +305,607 @@ def percentile(q: float) -> "[float] -> int":
     f.__name__ = 'perc_{}'.format(q)
     return f
 
-
-# In[ ]:
-
-_probstats = prob_books.groupby('Book').Val.agg(['mean', 'std', 'median', percentile(5), percentile(25), ])
-_probstats
-
-
-# In[ ]:
-
-_probstats[['perc_5', 'perc_25', 'median', 'mean']].plot();
+def show_freq(bookstats):
+    probstats = (bookstats.groupby('Book').Val
+                 .agg(['mean', 'std', 'median',
+                       percentile(5), percentile(25)])
+                .rename(columns=str.capitalize))
+    probstats[['Perc_5', 'Perc_25', 'Median', 'Mean']].plot(title='Word Frequency')
+    plt.xticks(range(1, 8));
+    return probstats
 
 
 # In[ ]:
 
-Summarizing the basic statistics of the uncommonness of the words, we see a slight dip between the first and second books
+show_freq(prob_books)
+
+
+# The most drastic difference is in the frequency of the 95th percentile between first and second books. The graph shows that a typical word in the 95th percentile has a log probability of -13.3 in the first book and -13.8 in the second. It doesn't look that drastic, and there doesn't seem to be a discernable overall trend, either.
+# 
+# Out of curiosity, it could be helpful to dig into what the probabilities look like for the first couple hundred words.
+
+# In[ ]:
+
+def show_unc_word_trend():
+    n = 200
+    s1 = Series(probs1).sort_values(ascending=True).reset_index(drop=1)
+    s1[s1 < -12][:n].plot()
+    s2 = Series(probs2).sort_values(ascending=True).reset_index(drop=1)
+    s2[s2 < -12][:n].plot(title='Log probability for $n$ rarest words')
+    plt.legend(['Book 1', 'Book 2'])
+    
+show_unc_word_trend()
+xo, xi = plt.xlim()
+plt.hlines([-18.25], xo , xi, linestyles='dashdot')
+plt.hlines([-18.32], xo , xi, linestyles='dashdot');
+
+
+# Starting from the least common words, it looks like the part of the reason Book 2's words are less frequent is due to a few streaks of words that have log probabilities indicated by the dashed lines. The repetition of certain uncommon words in the story line could lead us to classify some text as more complex than we should. A solution would be to run the same plots on the probabilities of *unique* words in the texts.
+
+# In[ ]:
+
+def unique_probs(toks):
+    "Like `probs`, but drop duplicate words"
+    df = DataFrame([(tok.prob, tok.orth) for tok in toks if tok.is_lower], columns=['Prob', 'Id'])
+    return df.drop_duplicates('Id')['Prob'].tolist()
+
+uprob_books = over_books(unique_probs)
+
+
+# In[ ]:
+
+ufreq = show_freq(uprob_books)
+ufreq
+
+
+# Here, the trend towards more complex words is much more pronounced, and looks as if it continues throughout the whole series, with book 5 having disproportionately many more complex words. As anyone who's read the series can tell, Book 5 (*Order of the Phoenix*) stands out as being disproportionately longer in page numbers, as confirmed by the wordcount:
+
+# In[ ]:
+
+wc = Series(z.valmap(len, bktksall))
+wc.plot(title='Word count');
+plt.ylim(0, None);
+
+
+# ...which could lead us to wonder whether the increasing complexity in word choice is simply an artifact of the length of the books (if the text were generated randomly from the same distribution, we would expect longer texts to include a greater number of unique and rarer words).
+
+# In[ ]:
+
+plt.scatter(wc, ufreq.Mean)
+plt.ylabel('Mean log p')
+plt.xlabel('Total word count');
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+get_ipython().magic('pinfo sns.jointplot')
+
+
+# In[ ]:
+
+sns.jointplot(x='Word_count', y='Mean', data=ufreq.assign(Word_count=wc), kind="reg");
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+np.corrcoef(ufreq.Mean, wc)
+
+
+# In[ ]:
+
+sns.regplot(x='Word_count', y='Mean', data=ufreq.assign(Word_count=wc))
+plt.title('Corr. Coef.: {:.3f}'.format(stats.pearsonr(ufreq.Mean, wc)[0]));
+
+
+# In[ ]:
+
+def simgrowth(toks, nsims=20):
+    def simgrowth_():
+        s = set()
+        l = []
+        tks = map(prop('orth'), toks)
+        nr.shuffle(tks)
+        for w in tks:
+            s.add(w)
+            l.append(len(s))
+        return l
+    return [simgrowth_() for _ in range(nsims)]
+
+ls = simgrowth(bktks[1])
+
+
+# In[ ]:
+
+for l in ls:
+    plt.plot(l, alpha=.05)
+
+
+# ls5 = simgrowth(bktks[5])
+# plt.figure(figsize=(16, 10))
+# for l in ls5:
+#     plt.plot(l, alpha=.05)
+#     
+# for l in ls:
+#     plt.plot(l, alpha=.05)
+
+# Indeed, the relationship between typical word appears to have a quite [log] linear relationship with word count. I'm not sure what relationship is to be expected, but it looks like it would be worthwhile to try and correct for document length in determining word complexity. 
+
+# In[ ]:
+
+toks
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+def sim_gen_text(worddist=5, sizebook=1, nsims=10000, aggfunc=np.median, seed=count()):
+    size = len(bktksall[sizebook])
+#     toks = list(bktksall[worddist])
+    
+    d = DataFrame([(t.prob, t.orth) for t in bktks[worddist]], columns=['Prob', 'Id'])
+    
+    def sim(_):
+        dd = d.sample(n=size, replace=True, random_state=next(seed)).drop_duplicates('Id').Prob
+        return aggfunc(dd)
+    
+#     toks = nr.choice(list(bktksall[worddist]), size=size, replace=True)
+    return map(sim, range(nsims))
+
+
+# In[ ]:
+
+get_ipython().magic('time gens = sim_gen_text()')
+
+
+# In[ ]:
+
+get_ipython().magic('time gens_mu = sim_gen_text(func=np.mean)')
+
+
+# In[ ]:
+
+gens_mu = sim_gen_text(func=np.mean)
+
+
+# In[ ]:
+
+get_ipython().run_cell_magic('time', '', 'gens_mus = {\n    booknum: sim_gen_text(worddist=5, sizebook=booknum,\n                          nsims=10000, aggfunc=np.mean)\n    for booknum in range(1, 8)\n}')
+
+
+# In[ ]:
+
+d = DataFrame(gens_mus)
+d.columns.name = 'Book'
+d = d.stack().sort_index(level='Book').reset_index(drop=0).rename(columns={0: 'Val'}).drop('level_0', axis=1)
+d['Source'] = 'Simulation'
+dboth = d.append(uprob_books.assign(Source='Actual')).sort_values(['Book', 'Source'], ascending=True)
+
+
+# In[ ]:
+
+bothagg = dboth.groupby(['Source', 'Book',]).mean()
+bothagg.unstack('Source')
+
+
+# In[ ]:
+
+pbothagg = bothagg.ix['Actual'].copy().rename(columns={'Val': 'Actual'})
+pbothagg.index -= 1
+pbothagg.plot(style='o', c='k', figsize=(16, 10))
+sns.violinplot('Book', 'Val', data=d); None
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+simplot
+
+
+# In[ ]:
+
+stats.
+
+
+# In[ ]:
+
+sns.regplot(x='Word_count', y='Mean', data=simplot)
+simplot = d.groupby(['Book']).mean().rename(columns={'Val': 'Mean'}).assign(Word_count=wc)
+plt.title('Corr. Coef.: {:.3f}'.format(stats.pearsonr(simplot.Mean, wc)[0]));
+
+
+# In[ ]:
+
+bothagg.ix['Simulation'].plot()
+bothagg.ix['Actual'].plot()
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+dboth
+
+
+# In[ ]:
+
+d[:2]
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+for bknum, ls in sorted(gens_mus.items()):
+    print()
+
+
+# In[ ]:
+
+plt.hist(gens, bins=30);
+
+
+# In[ ]:
+
+plt.hist(gens, bins=30);
+
+
+# In[ ]:
+
+plt.hist(gens_mu, bins=30);
+
+
+# In[ ]:
+
+gen = sim_gen_text()
+
+
+# In[ ]:
+
+d[:2]
+
+
+# In[ ]:
+
+d.drop_duplicates('Id').Prob.median()
+
+
+# In[ ]:
+
+t = gen[0]
+t.pr
+
+
+# In[ ]:
+
+DataFrame(ufreq.Median).assign(Word_count=lambda x: wc)
+
+
+# In[ ]:
+
+for k, gdf in uprob_books.groupby('Book'):
+    break
+
+
+# In[ ]:
+
+nsamp = 1000
+nr.seed(nsamp)
+pd.np.random.seed(nsamp)
+gdf.Val.sample(nsamp, replace=nsamp, random_state=1).median()
+
+
+# In[ ]:
+
+def bootstrap_wd_prob(probs: Series, nsims=100, nsamp=1000):
+    meds = Series([np.median(nr.choice(probs, size=nsamp, replace=True)) for _ in range(nsims)])
+    return meds
+
+
+# In[ ]:
+
+def bootstrap_wd_prob_slow(probs: Series, nsims=100, nsamp=1000):
+    meds = Series([probs.sample(nsims, replace=True, random_state=None).median() for _ in range(nsamp)])
+    return meds
+
+
+# In[ ]:
+
+get_ipython().magic('time meds = bootstrap_wd_prob(gdf.Val)')
+
+
+# In[ ]:
+
+uprob_med_plot = uprob_books.assign(Book=lambda x: x.Book - 1).groupby('Book').Val.median()
+del uprob_med_plot
+
+
+# In[ ]:
+
+len(meds), len(meds2)
+
+
+# In[ ]:
+
+prob_books.groupby('Book').size()
+
+
+# In[ ]:
+
+simfunc = booker(partial(bootstrap_wd_prob, nsims=1000, nsamp=1000))
+sims = pd.concat([simfunc(gdf.Val, bk) for bk, gdf in uprob_books.groupby('Book')]).reset_index(drop=1)
+
+
+# In[ ]:
+
+simfunc = booker(partial(bootstrap_wd_prob, nsims=1000, nsamp=2000))
+sims2k = pd.concat([simfunc(gdf.Val, bk) for bk, gdf in uprob_books.groupby('Book')]).reset_index(drop=1)
+
+
+# In[ ]:
+
+simfunc = booker(partial(bootstrap_wd_prob, nsims=1000, nsamp=10000))
+sims1k10k = pd.concat([simfunc(gdf.Val, bk) for bk, gdf in uprob_books.groupby('Book')]).reset_index(drop=1)
+
+
+# In[ ]:
+
+simfunc = booker(partial(bootstrap_wd_prob, nsims=10000, nsamp=1000))
+sims10k1k = pd.concat([simfunc(gdf.Val, bk) for bk, gdf in uprob_books.groupby('Book')]).reset_index(drop=1)
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 10))
+plt.title('1000 sims, 10000 samps')
+sns.violinplot(x='Book', y='Val', data=sims10k1k);
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 10))
+plt.title('1000 sims, 10000 samps')
+sns.violinplot(x='Book', y='Val', data=sims2k);
+
+
+# In[ ]:
+
+uprob_books.groupby('Book').Val.median()
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 10))
+plt.title('1000 sims, 1000 samps')
+sns.violinplot(x='Book', y='Val', data=sims);
+plt.xlim(-.5, 6.5);
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 10))
+plt.title('200 sims, 1000 samps')
+sns.violinplot(x='Book', y='Val', data=sims2);
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 10))
+plt.title('100 sims, 1000 samps')
+sns.violinplot(x='Book', y='Val', data=sims);
+
+
+# In[ ]:
+
+sims
+
+
+# In[ ]:
+
+meds.hist(alpha=.5)
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+nsims = 100
+
+
+# In[ ]:
+
+meds = Series([gdf.Val.sample(nsims, replace=nsamp, random_state=None).median() for _ in range(nsamp)])
+
+
+# In[ ]:
+
+gdf[:2]
+
+
+# In[ ]:
+
+len(gdf)
+
+
+# In[ ]:
+
+uprob_books[:2]
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+probs1 = probs(bktks[1])
+probs2 = probs(bktks[2])
+probs12 = probs1 + probs2
+
+
+# In[ ]:
+
+def get_diff(p1, p2, justdiff=False):
+    pct1 = np.percentile(p1, 5)
+    pct2 = np.percentile(p2, 5)
+    if justdiff:
+        return pct2 - pct1
+    return pct1, pct2, pct2 - pct1
+
+print('Actual 95%-tile rarest words: Book 1: {:.2f}, Book 2: {:.2f}, Diff: {:.4f}'.format(*get_diff(probs1, probs2)))
+
+
+# In[ ]:
+
+all_sims = []
+
+
+# In[ ]:
+
+def simulate_pctile_diff(probs12, probs1, nsim=200):
+    probs12 = np.array(probs12)
+    N = len(probs12)
+    l1 = len(probs1)
+    l2 = N - l1
+    p = l1 / N
+    nr.seed(0)
+    
+    def shuffle_groups3():
+        g1 = nr.binomial(1, p , N)
+        p1 = probs12[g1 == 1]
+        p2 = probs12[g1 == 0]
+        return get_diff(p1, p2)
+    
+    for _ in range(nsim):
+        all_sims.append(shuffle_groups3())
+#     return Series([shuffle_groups3() for _ in range(nsim)])
+
+
+# In[ ]:
+
+get_ipython().magic('time simulate_pctile_diff(probs12, probs1, nsim=20000)')
+
+
+# In[ ]:
+
+filt = lambda x: ((x > -18.5) & (x < -18))
+
+
+# In[ ]:
+
+_prob = DataFrame([(tok.orth_, tok.prob) for tok in bktks[2] if filt(tok.prob)], columns=['Word', 'Prob'])
+_prob.Prob = _prob.Prob.round(3)
+_prob[filt(_prob.Prob)]
+_prob.query('Prob == [-18.317, -18.257]')
+
+
+# In[ ]:
+
+s2[filt(s2)].value_counts(normalize=0)
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+all_sims
+
+
+# In[ ]:
+
+sall_sims = Series(all_sims)
+(sall_sims < get_diff(probs1, probs2)[2]).mean()
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+sall_sims.hist(bins=100, normed=1)
+
+
+# In[ ]:
+
+get_ipython().magic('time sims1 = simulate_pctile_diff(probs12, probs1, nsim=60000)')
+
+
+# In[ ]:
+
+get_ipython().magic('time sims = simulate_pctile_diff(probs12, probs1, nsim=200)')
+
+
+# In[ ]:
+
+sims2
+
+
+# In[ ]:
+
+get_ipython().magic('time sims2 = simulate_pctile_diff(probs12, probs1, nsim=2000)')
+
+
+# In[ ]:
+
+sims2.hist(bins=50, normed=1)
+sims1.hist(bins=50, normed=1)
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+nr.ber
+
+
+# In[ ]:
+
+l1, l2
+
+
+# In[ ]:
+
+nr.shuffle()
 
 
 # In[ ]:
