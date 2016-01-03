@@ -5,6 +5,7 @@ dependencies:
 - pip:
   - "ipython[notebook]<4"
   - toolz
+  - snakeviz
   #- pyth
 - python=3.5
 - spacy
