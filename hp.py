@@ -177,6 +177,7 @@ Characters/Word: 4.4 | Words/Sentence: 18.4
 
 
 # # Parse Text
+# I recently saw the [spaCy](https://spacy.io) library, which bills itself as a "library for industrial-strength natural language processing in Python and Cython," and this seemd like a good opportunity to explore it. The starting point is a parsing function that parses, tags and detects entities all in one go.
 
 # In[ ]:
 
@@ -201,7 +202,7 @@ nlp = English()
 
 # In[ ]:
 
-tokens = nlp(bks.b1, tag=True, parse=True, entity=True)
+# tokens = nlp(bks.b1, tag=True, parse=True, entity=True)
 
 
 # In[ ]:
@@ -232,21 +233,28 @@ spanlen = lambda span: len([wd for wd in span if len(wd) > 1])
 
 # In[ ]:
 
-wd_len = tobooks(wd_lens, bks=bktksall)
-wd_len.groupby('Book')['Val'].agg(['mean', 'median', 'std'])
+def wd_sent_lens():
+    wd_len_ = tobooks(wd_lens, bks=bktksall)
+    wd_len = wd_len_.groupby('Book')['Val'].agg(['mean', 'median', 'std'])
+    
+    sent_len_ = tobooks(sent_lens, bks=bktksall)
+    sent_len = sent_len_.groupby('Book')['Val'].agg(['mean', 'median', 'std'])
+    lens = {'Sentence_length': sent_len, 'Word_length': wd_len}
+    return pd.concat(lens.values(), axis=1, keys=lens.keys())
+ 
+wd_sent_lens()
 
 
 # In[ ]:
 
-sent_len = tobooks(sent_lens, bks=bktksall)
-sent_len.groupby('Book')['Val'].agg(['mean', 'median', 'std'])
+assertert False
 
 
-# - There doesn't seem to be a discernible difference in the average word length between the books. This could be because even complex language is largely composed of shorter, commoner words, highlighted by rarer, more complex words. A way to test this could be to somehow get a measure of the frequency of rarer words
+# - There doesn't seem to be a discernible difference in the average word length between the books. This could be because even complex language is largely composed of shorter, commoner words, highlighted by rarer, more complex words. A way to test this could be to somehow get a measure of the frequency of just the rarer words
 
 # In[ ]:
 
-tt = bktks[1]
+# tt = bktks[1]
 
 
 # In[ ]:
@@ -286,7 +294,9 @@ wdfreq
 
 # In[ ]:
 
-wdfreq.apply(mc('cumsum')).ix[10].plot(title='Share of words in each book that appear 10 times or less');
+wdfreq.apply(mc('cumsum')).ix[10].plot(title='Share of words in each book that appear 10 times or less')
+plt.ylabel('% of words in each book that appear 10 times or less');
+assert False, 'Format?'
 
 
 # This, however, only counts words that are rare within the context of this book. spaCy provides a log-probability score for each parsed word, based on its frequency in external corpora. These will be negative numbers such that a lower score indicates that a word is less common.
@@ -338,16 +348,23 @@ show_unc_word_trend()
 xo, xi = plt.xlim()
 plt.hlines([-18.25], xo , xi, linestyles='dashdot')
 plt.hlines([-18.32], xo , xi, linestyles='dashdot');
+assert False, "Resize plot"
 
 
 # Starting from the least common words, it looks like the part of the reason Book 2's words are less frequent is due to a few streaks of words that have log probabilities indicated by the dashed lines. The repetition of certain uncommon words in the story line could lead us to classify some text as more complex than we should. A solution would be to run the same plots on the probabilities of *unique* words in the texts.
 
 # In[ ]:
 
+def get_prob_id(toks) -> 'DataFrame[Prob, Id]':
+    return DataFrame([(tok.prob, tok.orth) for tok in toks if tok.is_lower], columns=['Prob', 'Id'])
+
+
+# In[ ]:
+
 def unique_probs(toks):
     "Like `probs`, but drop duplicate words"
-    df = DataFrame([(tok.prob, tok.orth) for tok in toks if tok.is_lower], columns=['Prob', 'Id'])
-    return df.drop_duplicates('Id')['Prob'].tolist()
+    df = get_prob_id(toks)
+    return df.drop_duplicates('Id').Prob.tolist()
 
 uprob_books = over_books(unique_probs)
 
@@ -358,53 +375,32 @@ ufreq = show_freq(uprob_books)
 ufreq
 
 
-# Here, the trend towards more complex words is much more pronounced, and looks as if it continues throughout the whole series, with book 5 having disproportionately many more complex words. As anyone who's read the series can tell, Book 5 (*Order of the Phoenix*) stands out as being disproportionately longer in page numbers, as confirmed by the wordcount:
+# Here, the trend towards more complex words is much more pronounced, and looks as if it continues throughout the whole series, with book 5 having disproportionately many more complex words. As anyone who's read the series can tell, Book 5 (*Order of the Phoenix*) also stands out as being disproportionately longer in page numbers, as confirmed by the wordcount:
 
 # In[ ]:
 
 wc = Series(z.valmap(len, bktksall))
-wc.plot(title='Word count');
-plt.ylim(0, None);
+wc.plot(title='Word count'); plt.ylim(0, None);
 
 
 # ...which could lead us to wonder whether the increasing complexity in word choice is simply an artifact of the length of the books (if the text were generated randomly from the same distribution, we would expect longer texts to include a greater number of unique and rarer words).
 
 # In[ ]:
 
-plt.scatter(wc, ufreq.Mean)
-plt.ylabel('Mean log p')
-plt.xlabel('Total word count');
+plt.scatter(wc, ufreq.Mean); plt.ylabel('Mean log p'); plt.xlabel('Total word count');
 
 
 # In[ ]:
 
-
-
-
-# In[ ]:
-
-get_ipython().magic('pinfo sns.jointplot')
-
-
-# In[ ]:
-
-sns.jointplot(x='Word_count', y='Mean', data=ufreq.assign(Word_count=wc), kind="reg");
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-np.corrcoef(ufreq.Mean, wc)
-
-
-# In[ ]:
-
-sns.regplot(x='Word_count', y='Mean', data=ufreq.assign(Word_count=wc))
-plt.title('Corr. Coef.: {:.3f}'.format(stats.pearsonr(ufreq.Mean, wc)[0]));
+def plot_corrcoef(x=None, y=None, data=None):
+    sns.regplot(x=x, y=y, data=data)
+    plt.title('Corr. Coef.: {:.3f}'.format(stats.pearsonr(data[x], data[y])[0]))
+    plt.ylabel('Mean log p')
+    plt.xlabel('Total word count');
+    
+plot_corrcoef(x='Word_count', y='Mean', data=ufreq.assign(Word_count=wc))
+# sns.regplot(x='Word_count', y='Mean', data=ufreq.assign(Word_count=wc))
+# plt.title('Corr. Coef.: {:.3f}'.format(stats.pearsonr(ufreq.Mean, wc)[0]));
 
 
 # In[ ]:
@@ -447,52 +443,139 @@ toks
 
 # In[ ]:
 
-
+import sys
 
 
 # In[ ]:
 
-def sim_gen_text(worddist=5, sizebook=1, nsims=10000, aggfunc=np.median, seed=count()):
-    size = len(bktksall[sizebook])
-#     toks = list(bktksall[worddist])
+from joblib import Parallel, delayed
+
+
+# In[ ]:
+
+
+def sim(df, seed=None, aggfunc=None, size=None):
+
+    dd = (df.sample(n=size, replace=False, random_state=seed
+                   ).drop_duplicates('Id').Prob)
+    # with replacement, the distribution gets biased
+    # towards more low-probability words
+    return aggfunc(dd)
+
+
+# In[ ]:
+
+def sim_gen_text(worddist=5, sizebook=1, nsims=10000,
+                 aggfunc=np.median, n_jobs=0, vb=False):
+    pt = print if vb else (lambda *x, **_: None)
+    sizedf = get_prob_id(bktksall[sizebook])
+    size = len(sizedf)
+    df = get_prob_id(bktksall[worddist])
     
-    d = DataFrame([(t.prob, t.orth) for t in bktks[worddist]], columns=['Prob', 'Id'])
+#     def sim(_):
+#         dd = (df.sample(n=size, replace=False,random_state=next(seed)
+#                        ).drop_duplicates('Id').Prob)
+#         # with replacement, the distribution gets biased
+#         # towards more low-probability words
+#         return aggfunc(dd)
     
-    def sim(_):
-        dd = d.sample(n=size, replace=True, random_state=next(seed)).drop_duplicates('Id').Prob
-        return aggfunc(dd)
+    mu = aggfunc(df.drop_duplicates('Id').Prob)
+    pt(mu)
+    if len(df) == size:
+        return [mu for _ in range(nsims)]
+#         sim = lambda _: mu
+        
+    if len(df) < size:
+        raise ValueError("Can't sample with replacement"
+                         " from smaller distribution")
+    f = delayed(sim) if n_jobs else sim
+    gen = (f(df, seed=seed, aggfunc=aggfunc, size=size) for seed in range(nsims))
+    if n_jobs:
+        pt('Running {} jobs...'.format(n_jobs), end=' ')
+        ret = Parallel(n_jobs=n_jobs)(gen)
+    else:
+        ret = list(gen)
+    pt('Done.')
+    sys.stdout.flush()
+    return ret 
+
+
+# In[ ]:
+
+get_ipython().magic('time xp = sim_gen_text(worddist=5, sizebook=1, nsims=1000, aggfunc=np.mean, n_jobs=0)')
+
+
+# In[ ]:
+
+get_ipython().magic('time xp = sim_gen_text(worddist=5, sizebook=1, nsims=1000, aggfunc=np.mean, n_jobs=2)')
+
+
+# In[ ]:
+
+get_ipython().magic('time xp = sim_gen_text(worddist=5, sizebook=1, nsims=1000, aggfunc=np.mean, n_jobs=-1)')
+
+
+# In[ ]:
+
+get_ipython().magic('time x = sim_gen_text(worddist=5, sizebook=1, nsims=100, aggfunc=np.mean, seed=count(1))')
+
+
+# In[ ]:
+
+get_ipython().magic('time x = sim_gen_text(worddist=5, sizebook=5, nsims=100, aggfunc=np.mean, seed=count(1))')
+
+
+# In[ ]:
+
+def get_gen_prob_text(nsims=10000, n_jobs=-1, usecache=True):
+    """Run simulations and cache them (running ~10k sims
+    for each book) takes ~10 min."""
+    fn = 'cache/gen_prob_text_{}.csv'.format(nsims)
     
-#     toks = nr.choice(list(bktksall[worddist]), size=size, replace=True)
-    return map(sim, range(nsims))
+    def gen_prob_text_read():
+        return pd.read_csv(fn).rename(columns=int)
+
+    if usecache:
+        try:
+            return gen_prob_text_read()
+        except IOError:
+            print('{} not found, running simulations...'.format(fn))
+            sys.stdout.flush()
+    
+    gens_mus = {
+        booknum: sim_gen_text(worddist=5, sizebook=booknum,
+                              nsims=nsims, aggfunc=np.mean, n_jobs=n_jobs)
+        for booknum in range(1, 8)
+    }
+    d = DataFrame(gens_mus)
+    d.to_csv(fn, index=None)
+    return gen_prob_text_read()
+    
 
 
 # In[ ]:
 
-get_ipython().magic('time gens = sim_gen_text()')
+get_ipython().magic('time d = get_gen_prob_text(nsims=2000, n_jobs=0)')
 
 
 # In[ ]:
 
-get_ipython().magic('time gens_mu = sim_gen_text(func=np.mean)')
+get_ipython().system('rm cache/gen_prob_text_2000.csv')
 
 
 # In[ ]:
 
-gens_mu = sim_gen_text(func=np.mean)
+get_ipython().magic('time d1 = get_gen_prob_text(nsims=20000, n_jobs=-1)')
 
 
 # In[ ]:
 
-get_ipython().run_cell_magic('time', '', 'gens_mus = {\n    booknum: sim_gen_text(worddist=5, sizebook=booknum,\n                          nsims=10000, aggfunc=np.mean)\n    for booknum in range(1, 8)\n}')
-
-
-# In[ ]:
-
-d = DataFrame(gens_mus)
+cols = ['Val', 'Book', 'Source']
+d = d1.copy()
 d.columns.name = 'Book'
 d = d.stack().sort_index(level='Book').reset_index(drop=0).rename(columns={0: 'Val'}).drop('level_0', axis=1)
 d['Source'] = 'Simulation'
-dboth = d.append(uprob_books.assign(Source='Actual')).sort_values(['Book', 'Source'], ascending=True)
+dboth = d[cols].append(uprob_books.assign(Source='Actual')[cols]).sort_values(['Book', 'Source'], ascending=True)
 
 
 # In[ ]:
@@ -503,25 +586,46 @@ bothagg.unstack('Source')
 
 # In[ ]:
 
+bothagg = dboth.groupby(['Source', 'Book',]).mean()
+bothagg.unstack('Source')
+
+
+# In[ ]:
+
+d.groupby('Book').Val.mean()
+
+
+# In[ ]:
+
+ufreq.Mean
+
+
+# In[ ]:
+
+bk5sim = d.query('Book == 5')
+bk5mu = uprob_books.query('Book == 5').Val.mean()
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 10))
 pbothagg = bothagg.ix['Actual'].copy().rename(columns={'Val': 'Actual'})
 pbothagg.index -= 1
-pbothagg.plot(style='o', c='k', figsize=(16, 10))
-sns.violinplot('Book', 'Val', data=d); None
+# pbothagg.plot(style='o', c='k', figsize=(16, 10))
+plt.scatter([], [], s=80, c='k', marker='x', linewidth=2)
+plt.legend(['Actual']);
+sns.violinplot('Book', 'Val', data=d)
+plt.scatter(pbothagg.index, pbothagg.Actual, s=80, c='k', marker='x', linewidth=2);
 
 
 # In[ ]:
 
-
-
-
-# In[ ]:
-
-simplot
+Percentiles:
 
 
 # In[ ]:
 
-stats.
+DataFrame(Series({k: ((v.Val < ufreq.Mean[k]).mean() * 100).round(1) for k, v in d.groupby('Book')})).T
 
 
 # In[ ]:
@@ -533,54 +637,65 @@ plt.title('Corr. Coef.: {:.3f}'.format(stats.pearsonr(simplot.Mean, wc)[0]));
 
 # In[ ]:
 
-bothagg.ix['Simulation'].plot()
-bothagg.ix['Actual'].plot()
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-dboth
-
-
-# In[ ]:
-
-d[:2]
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-for bknum, ls in sorted(gens_mus.items()):
-    print()
-
-
-# In[ ]:
-
-plt.hist(gens, bins=30);
-
-
-# In[ ]:
-
-plt.hist(gens, bins=30);
-
-
-# In[ ]:
-
 plt.hist(gens_mu, bins=30);
 
 
+# #Benchmark Joblib
+
 # In[ ]:
 
-gen = sim_gen_text()
+import time
+
+def timer(f):
+    @wraps(f)
+    def f2(*a, **kw):
+        st = time.time()
+        ret = f(*a, **kw)
+        return time.time() - st, ret
+    return f2
+
+def run_timed(n_jobs=None, sims=[]):
+    return [timer(get_gen_prob_text)(nsims=nsims, n_jobs=n_jobs, usecache=False)[0] for nsims in sims]
+
+simtrials = [10, 20, 100, 300, 1000, 2000, 5000, 8000, 10000, 15000, 20000]
+
+
+# In[ ]:
+
+nj0 = run_timed(n_jobs=0, sims=simtrials)
+nj2 = run_timed(n_jobs=2, sims=simtrials)
+njn1 = run_timed(n_jobs=-1, sims=simtrials)
+
+
+# In[ ]:
+
+DataFrame(OrderedDict([(0, nj0), (2, nj2), (-1, njn1)]), index=simtrials).plot(style='-o')
+
+
+# In[ ]:
+
+secs = DataFrame(OrderedDict([(0, nj0), (2, nj2), (-1, njn1)]), index=simtrials) 
+(secs // 60 + (secs % 60) * .01).round(2)
+
+
+# In[ ]:
+
+secs.round(2)
+
+
+# In[ ]:
+
+(secs % 60) * .01
+
+
+# In[ ]:
+
+get_ipython().system('say done')
+
+
+# In[ ]:
+
+DataFrame(OrderedDict([(0, nj0), (2, nj2), (-1, njn1)]), index=simtrials).plot(style='-o')
 
 
 # In[ ]:
