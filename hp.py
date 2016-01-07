@@ -16,19 +16,28 @@ get_ipython().run_cell_magic('javascript', '', "IPython.keyboard_manager.command
 from collections import namedtuple, Counter, defaultdict, OrderedDict
 from functools import wraps, partial
 from glob import glob
-import numpy as np
 from itertools import count
 import operator as op
 from operator import itemgetter as itg, attrgetter as prop, methodcaller as mc
 from os.path import join
 import re
-from scipy import stats
-import toolz.curried as z
+import sys
 import warnings
 
+from joblib import Parallel, delayed
+import numpy as np
+import matplotlib.pyplot as plt
+from pandas import DataFrame, Series
+import pandas as pd
+from scipy import stats
+import seaborn as sns
+import toolz.curried as z
 
 warnings.filterwarnings("ignore")
 p = print
+pd.options.display.notebook_repr_html = False
+pd.options.display.width = 120
+get_ipython().magic('matplotlib inline')
 
 
 # pat = re.compile(r'.+? HP (\d+).+')
@@ -73,7 +82,7 @@ class Book(object):
 
 class BookSeries(object):
     def __init__(self, n=7):
-        bks = {i: parsebook(i, vb=1) for i in range(1, n + 1)}
+        bks = {i: parsebook(i, vb=False) for i in range(1, n + 1)}
         
         self.txts = OrderedDict()
         for n, bk in sorted(bks.items()):
@@ -158,11 +167,6 @@ bksall = BookSeries(7)
 
 # In[ ]:
 
-print(bk.txt[:2000])
-
-
-# In[ ]:
-
 Counter(filter(lambda x: not re.match(r'[\dA-Za-z \."\'\-\(\);:!\?,\n]', x), bks.b1))
 
 
@@ -174,35 +178,19 @@ Complexity
 
 - Words: 129 | Syllables: 173 | Sentences: 7 | Characters: 568 | Adverbs: 4
 Characters/Word: 4.4 | Words/Sentence: 18.4
+- sentence structure
 
 
 # # Parse Text
-# I recently saw the [spaCy](https://spacy.io) library, which bills itself as a "library for industrial-strength natural language processing in Python and Cython," and this seemd like a good opportunity to explore it. The starting point is a parsing function that parses, tags and detects entities all in one go.
+# I have recently come across the [spaCy](https://spacy.io) library, which bills itself as a "library for industrial-strength natural language processing in Python and Cython," and this seemd like a good opportunity to explore its capabilities. The starting point is a parsing function that parses, tags and detects entities all in one go.
 
 # In[ ]:
 
-from pandas import DataFrame, Series
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-
-pd.options.display.notebook_repr_html = False
-pd.options.display.width = 120
-get_ipython().magic('matplotlib inline')
-
-
-# In[ ]:
-
-import spacy.parts_of_speech as ps
-import spacy.en
+# import spacy.parts_of_speech as ps
+# import spacy.en
 from spacy.en import English
 
 nlp = English()
-
-
-# In[ ]:
-
-# tokens = nlp(bks.b1, tag=True, parse=True, entity=True)
 
 
 # In[ ]:
@@ -213,7 +201,11 @@ bktksall = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bks
 
 # In[ ]:
 
-def tobooks(f, bks=bktks):
+def tobooks(f: '(toks, int) -> DataFrame', bks=bktks) -> DataFrame:
+    """Apply a function `f` to all the tokens in each book,
+    putting the results into a DataFrame column, and adding
+    a column to indicate each book.
+    """
     return pd.concat([f(v, i) for i, v in bks.items()])
 
 def booker(f: 'toks -> [str]') -> '(toks, int) -> DataFrame':
@@ -226,6 +218,14 @@ def booker(f: 'toks -> [str]') -> '(toks, int) -> DataFrame':
     
 over_books = z.comp(partial(tobooks, bks=bktksall), booker)
 
+
+# # Search for increasing complexity
+# ## Average word and sentence length
+# 
+# A first simple search would be to see if the average length of the words or sentences increases throughout the series.
+
+# In[ ]:
+
 sent_lens = booker(lambda parsed: [spanlen(sent) for sent in parsed.sents])
 wd_lens = booker(lambda parsed: [len(tok) for tok in parsed if len(tok) > 1])
 spanlen = lambda span: len([wd for wd in span if len(wd) > 1])
@@ -234,28 +234,40 @@ spanlen = lambda span: len([wd for wd in span if len(wd) > 1])
 # In[ ]:
 
 def wd_sent_lens():
-    wd_len_ = tobooks(wd_lens, bks=bktksall)
-    wd_len = wd_len_.groupby('Book')['Val'].agg(['mean', 'median', 'std'])
+    def agg_lens(lns):
+        return (tobooks(lns, bks=bktksall)
+              .groupby('Book')['Val'].agg(['mean', 'median', 'std'])
+              .rename(columns=str.capitalize))
+
+    wd_len = agg_lens(wd_lens)
+    sent_len = agg_lens(sent_lens)
     
-    sent_len_ = tobooks(sent_lens, bks=bktksall)
-    sent_len = sent_len_.groupby('Book')['Val'].agg(['mean', 'median', 'std'])
     lens = {'Sentence_length': sent_len, 'Word_length': wd_len}
     return pd.concat(lens.values(), axis=1, keys=lens.keys())
  
-wd_sent_lens()
+wsls = wd_sent_lens()
+wsls
 
 
 # In[ ]:
 
-assertert False
+plt.figure(figsize=(16, 5))
+plt.subplot(1, 2, 1)
+wsls.Word_length['Mean'].plot(title='Average word length')
+plt.subplot(1, 2, 2)
+wsls.Sentence_length['Mean'].plot(title='Average sentence length');
 
 
-# - There doesn't seem to be a discernible difference in the average word length between the books. This could be because even complex language is largely composed of shorter, commoner words, highlighted by rarer, more complex words. A way to test this could be to somehow get a measure of the frequency of just the rarer words
+# There does appear to be an increasing trend for both average word and sentence length difference between the books, though the scale of the difference is miniscule in light of the standard deviations.
 
 # In[ ]:
 
 # tt = bktks[1]
 
+
+# ## Word complexity by frequency
+# 
+# The lack of discernible difference in word/sentence length could be because even complex language is still largely composed of shorter, commoner words, highlighted by rarer, more complex words. A way to test this could be to somehow get a measure of the frequency of just the rarer words by counting, for example,  what percentage of the words only appear once.
 
 # In[ ]:
 
@@ -268,15 +280,14 @@ def reg_words(parsed):
 def wd_freqs(parsed):
     vcs = Series(Counter(reg_words(parsed))).sort_values(ascending=False)
     return vcs
-    return vcs[vcs < 20]
 
-
-# The folllowing shows the relative word frequency distribution. The first two numbers in the first column indicate that for book one, words appearing only 1 time account for 45.2% of all the word occurences, while words appearing twice account for 16.9%. If anything, it appears that the share of rare words (those appearing only once or twice) decrease with each book, rather than increase.
 
 # In[ ]:
 
 uncwds = over_books(wd_freqs).reset_index(drop=1)
 
+
+# The folllowing shows the relative word frequency distribution. The first two numbers in the first column indicate that for book one, words appearing only 1 time account for 45.2% of all the word occurences, while words appearing twice account for 16.9%. If anything, it appears that the share of rare words (those appearing only once or twice) *decreases* with each book, rather than increases.
 
 # In[ ]:
 
@@ -289,17 +300,16 @@ wdfreq
 
 
 # The cumulative share of words appearing 10 times or less also doesn't seem to indicate an increasing share of uncommon words, and if anything points to uncommon words being used more in the first three books, and deacreasing for the last four. (The following graph should be interpreted to say that, for example, 90% of the words in the first book are those that appear fewer than 11 times, while 86% of the words in book 5 occur fewer than 11 times).
-# 
-# **artifact of fewer pages**?
 
 # In[ ]:
 
-wdfreq.apply(mc('cumsum')).ix[10].plot(title='Share of words in each book that appear 10 times or less')
-plt.ylabel('% of words in each book that appear 10 times or less');
-assert False, 'Format?'
+wdfreq.apply(mc('cumsum')).ix[10].plot()
+plt.ylabel('% of words in each book\n that appear 10 times or less');
 
 
-# This, however, only counts words that are rare within the context of this book. spaCy provides a log-probability score for each parsed word, based on its frequency in external corpora. These will be negative numbers such that a lower score indicates that a word is less common.
+# ## Word complexity by frequency in English language usage
+
+# The frequency counting above, however, only counts words that are rare within the context of this series. Fortunateky, spaCy provides a log-probability score for each parsed word, based on its frequency in external corpora. These will be negative numbers such that a lower score indicates that a word is less common in English usage outside of Harry Potter. "Low probability," "low likelihood" and "less common" are terms I'll use to describe words with low log-probability scores.
 
 # In[ ]:
 
@@ -330,9 +340,9 @@ def show_freq(bookstats):
 show_freq(prob_books)
 
 
-# The most drastic difference is in the frequency of the 95th percentile between first and second books. The graph shows that a typical word in the 95th percentile has a log probability of -13.3 in the first book and -13.8 in the second. It doesn't look that drastic, and there doesn't seem to be a discernable overall trend, either.
+# The most drastic difference is in the frequency of the 95th percentile between first and second books. The graph shows that a typical word in the 95th percentile has a log probability of -13.3 in the first book and -13.8 in the second. The drop doesn't look that drastic, and there doesn't seem to be a discernable overall trend, either.
 # 
-# Out of curiosity, it could be helpful to dig into what the probabilities look like for the first couple hundred words.
+# Out of curiosity, it could be helpful to dig into what the probabilities look like for the first couple hundred least likely words.
 
 # In[ ]:
 
@@ -357,10 +367,7 @@ assert False, "Resize plot"
 
 def get_prob_id(toks) -> 'DataFrame[Prob, Id]':
     return DataFrame([(tok.prob, tok.orth) for tok in toks if tok.is_lower], columns=['Prob', 'Id'])
-
-
-# In[ ]:
-
+ 
 def unique_probs(toks):
     "Like `probs`, but drop duplicate words"
     df = get_prob_id(toks)
@@ -379,16 +386,17 @@ ufreq
 
 # In[ ]:
 
+plt.figure(figsize=(16, 5))
 wc = Series(z.valmap(len, bktksall))
+plt.subplot(1, 2, 1)
 wc.plot(title='Word count'); plt.ylim(0, None);
+plt.subplot(1, 2, 2)
+plt.scatter(wc, ufreq.Mean);
+plt.title('Word likelihood vs word count')
+plt.ylabel('Mean log p'); plt.xlabel('Total word count');
 
 
 # ...which could lead us to wonder whether the increasing complexity in word choice is simply an artifact of the length of the books (if the text were generated randomly from the same distribution, we would expect longer texts to include a greater number of unique and rarer words).
-
-# In[ ]:
-
-plt.scatter(wc, ufreq.Mean); plt.ylabel('Mean log p'); plt.xlabel('Total word count');
-
 
 # In[ ]:
 
@@ -402,6 +410,8 @@ plot_corrcoef(x='Word_count', y='Mean', data=ufreq.assign(Word_count=wc))
 # sns.regplot(x='Word_count', y='Mean', data=ufreq.assign(Word_count=wc))
 # plt.title('Corr. Coef.: {:.3f}'.format(stats.pearsonr(ufreq.Mean, wc)[0]));
 
+
+# Indeed, the relationship between typical word appears to have a quite [log] linear relationship with word count. I'm not sure what relationship is to be expected, but it looks like it would be worthwhile to try and correct for document length in determining word complexity. 
 
 # In[ ]:
 
@@ -434,29 +444,13 @@ for l in ls:
 # for l in ls:
 #     plt.plot(l, alpha=.05)
 
-# Indeed, the relationship between typical word appears to have a quite [log] linear relationship with word count. I'm not sure what relationship is to be expected, but it looks like it would be worthwhile to try and correct for document length in determining word complexity. 
+# ### Simulate word distributions
+# For each booklength $L$, I'll be repeatedly sampling $L$ words with replacement from the book with the largest word count, book 5, and then finding the average word probability of each sample. This should give an estimate of what the average word count should be for each book, they were all drawing from the same source, given the length of each book. 
 
 # In[ ]:
 
-toks
-
-
-# In[ ]:
-
-import sys
-
-
-# In[ ]:
-
-from joblib import Parallel, delayed
-
-
-# In[ ]:
-
-
-def sim(df, seed=None, aggfunc=None, size=None):
-
-    dd = (df.sample(n=size, replace=False, random_state=seed
+def sim(df, seed=None, aggfunc=None, size=None, rep=False):
+    dd = (df.sample(n=size, replace=rep, random_state=seed
                    ).drop_duplicates('Id').Prob)
     # with replacement, the distribution gets biased
     # towards more low-probability words
@@ -466,30 +460,25 @@ def sim(df, seed=None, aggfunc=None, size=None):
 # In[ ]:
 
 def sim_gen_text(worddist=5, sizebook=1, nsims=10000,
-                 aggfunc=np.median, n_jobs=0, vb=False):
+                 aggfunc=np.median, n_jobs=0, vb=False, rep=False):
     pt = print if vb else (lambda *x, **_: None)
     sizedf = get_prob_id(bktksall[sizebook])
     size = len(sizedf)
-    df = get_prob_id(bktksall[worddist])
-    
-#     def sim(_):
-#         dd = (df.sample(n=size, replace=False,random_state=next(seed)
-#                        ).drop_duplicates('Id').Prob)
-#         # with replacement, the distribution gets biased
-#         # towards more low-probability words
-#         return aggfunc(dd)
+    if worddist == 8:
+        df = pd.concat([get_prob_id(bktksall[i]) for i in range(1, 8)])
+    else:
+        df = get_prob_id(bktksall[worddist])
     
     mu = aggfunc(df.drop_duplicates('Id').Prob)
     pt(mu)
-    if len(df) == size:
+    if (len(df) == size) and not rep:
         return [mu for _ in range(nsims)]
-#         sim = lambda _: mu
         
     if len(df) < size:
         raise ValueError("Can't sample with replacement"
                          " from smaller distribution")
     f = delayed(sim) if n_jobs else sim
-    gen = (f(df, seed=seed, aggfunc=aggfunc, size=size) for seed in range(nsims))
+    gen = (f(df, seed=seed, aggfunc=aggfunc, size=size, rep=rep) for seed in range(nsims))
     if n_jobs:
         pt('Running {} jobs...'.format(n_jobs), end=' ')
         ret = Parallel(n_jobs=n_jobs)(gen)
@@ -502,35 +491,16 @@ def sim_gen_text(worddist=5, sizebook=1, nsims=10000,
 
 # In[ ]:
 
-get_ipython().magic('time xp = sim_gen_text(worddist=5, sizebook=1, nsims=1000, aggfunc=np.mean, n_jobs=0)')
+get_ipython().magic('time x = sim_gen_text(worddist=5, sizebook=5, nsims=100, aggfunc=np.mean, rep=True)')
 
 
 # In[ ]:
 
-get_ipython().magic('time xp = sim_gen_text(worddist=5, sizebook=1, nsims=1000, aggfunc=np.mean, n_jobs=2)')
-
-
-# In[ ]:
-
-get_ipython().magic('time xp = sim_gen_text(worddist=5, sizebook=1, nsims=1000, aggfunc=np.mean, n_jobs=-1)')
-
-
-# In[ ]:
-
-get_ipython().magic('time x = sim_gen_text(worddist=5, sizebook=1, nsims=100, aggfunc=np.mean, seed=count(1))')
-
-
-# In[ ]:
-
-get_ipython().magic('time x = sim_gen_text(worddist=5, sizebook=5, nsims=100, aggfunc=np.mean, seed=count(1))')
-
-
-# In[ ]:
-
-def get_gen_prob_text(nsims=10000, n_jobs=-1, usecache=True):
+def get_gen_prob_text(nsims=10000, n_jobs=-1, worddist=5, usecache=True,
+                      rep=False):
     """Run simulations and cache them (running ~10k sims
     for each book) takes ~10 min."""
-    fn = 'cache/gen_prob_text_{}.csv'.format(nsims)
+    fn = 'cache/gen_prob_text_{}_{}_{}.csv'.format(worddist, rep, nsims)
     
     def gen_prob_text_read():
         return pd.read_csv(fn).rename(columns=int)
@@ -543,8 +513,8 @@ def get_gen_prob_text(nsims=10000, n_jobs=-1, usecache=True):
             sys.stdout.flush()
     
     gens_mus = {
-        booknum: sim_gen_text(worddist=5, sizebook=booknum,
-                              nsims=nsims, aggfunc=np.mean, n_jobs=n_jobs)
+        booknum: sim_gen_text(worddist=worddist, sizebook=booknum,
+                              nsims=nsims, aggfunc=np.mean, n_jobs=n_jobs, rep=rep)
         for booknum in range(1, 8)
     }
     d = DataFrame(gens_mus)
@@ -555,12 +525,7 @@ def get_gen_prob_text(nsims=10000, n_jobs=-1, usecache=True):
 
 # In[ ]:
 
-get_ipython().magic('time d = get_gen_prob_text(nsims=2000, n_jobs=0)')
-
-
-# In[ ]:
-
-get_ipython().system('rm cache/gen_prob_text_2000.csv')
+get_ipython().magic('time d1 = get_gen_prob_text(nsims=10000, worddist=8, n_jobs=-1, rep=False)')
 
 
 # In[ ]:
@@ -586,46 +551,32 @@ bothagg.unstack('Source')
 
 # In[ ]:
 
-bothagg = dboth.groupby(['Source', 'Book',]).mean()
-bothagg.unstack('Source')
-
-
-# In[ ]:
-
-d.groupby('Book').Val.mean()
-
-
-# In[ ]:
-
-ufreq.Mean
-
-
-# In[ ]:
-
-bk5sim = d.query('Book == 5')
-bk5mu = uprob_books.query('Book == 5').Val.mean()
-
-
-# In[ ]:
-
 plt.figure(figsize=(16, 10))
 pbothagg = bothagg.ix['Actual'].copy().rename(columns={'Val': 'Actual'})
 pbothagg.index -= 1
-# pbothagg.plot(style='o', c='k', figsize=(16, 10))
 plt.scatter([], [], s=80, c='k', marker='x', linewidth=2)
 plt.legend(['Actual']);
 sns.violinplot('Book', 'Val', data=d)
 plt.scatter(pbothagg.index, pbothagg.Actual, s=80, c='k', marker='x', linewidth=2);
 
 
+# Barring some subtle errors in my simulation code (which would not surprise me at all), the violin plot above says that the actual average word probability for books 2, 5, 6 and 7 are roughly what one would expect if words were drawn at random from the whole series, based solely on the length of the book. Measuring word complexity as having a low probability, this could lead one to say that the word complexity of the first book is way below average, and the word complexity if the 3rd and 4th books are somewhat below average, with 5, 6 and 7 increasingly approaching the average. This seems to be the best evidence so far of the writing complexity increasing as Harry Potter's education progresses.
+# 
+# The trend in increasing complexity may be clearer by plotting this difference in simulated and actual average probability:
+
 # In[ ]:
 
-Percentiles:
+bothagg.unstack('Source')['Val'].eval('Simulation - Actual').plot(title='Average - actual word complexity');
 
 
 # In[ ]:
 
 DataFrame(Series({k: ((v.Val < ufreq.Mean[k]).mean() * 100).round(1) for k, v in d.groupby('Book')})).T
+
+
+# In[ ]:
+
+plot_corrcoef(x='Word_count', y='Mean', data=d.groupby(['Book']).mean().rename(columns={'Val': 'Mean'}).assign(Word_count=wc))
 
 
 # In[ ]:
@@ -662,56 +613,48 @@ simtrials = [10, 20, 100, 300, 1000, 2000, 5000, 8000, 10000, 15000, 20000]
 
 # In[ ]:
 
-nj0 = run_timed(n_jobs=0, sims=simtrials)
-nj2 = run_timed(n_jobs=2, sims=simtrials)
-njn1 = run_timed(n_jobs=-1, sims=simtrials)
+def benchmark(fn='cache/benchmarks.csv'):
+    try:
+        return pd.read_csv(fn, index_col =0).rename(columns=int)
+    except IOError:
+        print('No file {}, running sims'.format(fn))
+
+    nj0 = run_timed(n_jobs=0, sims=simtrials)
+    nj2 = run_timed(n_jobs=2, sims=simtrials)
+    njn1 = run_timed(n_jobs=-1, sims=simtrials)
+    return DataFrame(OrderedDict([(0, nj0), (2, nj2), (-1, njn1)]), index=simtrials)
 
 
 # In[ ]:
 
-DataFrame(OrderedDict([(0, nj0), (2, nj2), (-1, njn1)]), index=simtrials).plot(style='-o')
+benchmarks.to_csv('cache/benchmarks.csv')
 
 
 # In[ ]:
 
-secs = DataFrame(OrderedDict([(0, nj0), (2, nj2), (-1, njn1)]), index=simtrials) 
-(secs // 60 + (secs % 60) * .01).round(2)
+benchmarks2 = benchmark()
+benchmarks2
 
 
 # In[ ]:
 
-secs.round(2)
+pd.util.testing.assert_frame_equal(benchmarks, benchmarks2)
 
 
 # In[ ]:
 
-(secs % 60) * .01
+benchmarks2.plot(style='-o')
+
+
+# In[ ]:
+
+mins = (benchmarks2 // 60 + (benchmarks2 % 60) * .01).round(2)
+mins
 
 
 # In[ ]:
 
 get_ipython().system('say done')
-
-
-# In[ ]:
-
-DataFrame(OrderedDict([(0, nj0), (2, nj2), (-1, njn1)]), index=simtrials).plot(style='-o')
-
-
-# In[ ]:
-
-d[:2]
-
-
-# In[ ]:
-
-d.drop_duplicates('Id').Prob.median()
-
-
-# In[ ]:
-
-t = gen[0]
-t.pr
 
 
 # In[ ]:
