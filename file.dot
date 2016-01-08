@@ -1,0 +1,27 @@
+strict graph  {
+	"were " -- "Mr. ";
+	"were " -- ", ";
+	"were " -- "proud ";
+	"were " -- "that ";
+	"were " -- "they ";
+	"were " -- normal;
+	"were " -- "thank ";
+	"Mr. " -- "and ";
+	"Mr. " -- Dursley;
+	Dursley -- "Mrs. ";
+	Dursley -- ", ";
+	Dursley -- "of ";
+	Dursley -- Drive;
+	"of " -- "number ";
+	"number " -- four;
+	Drive -- "Privet ";
+	"proud " -- "say ";
+	"say " -- "were ";
+	"say " -- "to ";
+	normal -- "perfectly ";
+	"thank " -- ", ";
+	"thank " -- "you ";
+	"thank " -- much;
+	"thank " -- ". ";
+	much -- "very ";
+}

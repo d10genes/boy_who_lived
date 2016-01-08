@@ -33,6 +33,8 @@ from scipy import stats
 import seaborn as sns
 import toolz.curried as z
 
+from IPython.display import Image
+
 warnings.filterwarnings("ignore")
 p = print
 pd.options.display.notebook_repr_html = False
@@ -170,16 +172,13 @@ bksall = BookSeries(7)
 Counter(filter(lambda x: not re.match(r'[\dA-Za-z \."\'\-\(\);:!\?,\n]', x), bks.b1))
 
 
-# In[ ]:
-
-Complexity
-- avg word length (syllables?)
-- avg sentence length
-
-- Words: 129 | Syllables: 173 | Sentences: 7 | Characters: 568 | Adverbs: 4
-Characters/Word: 4.4 | Words/Sentence: 18.4
-- sentence structure
-
+#     Complexity
+#     - avg word length (syllables?)
+#     - avg sentence length
+# 
+#     - Words: 129 | Syllables: 173 | Sentences: 7 | Characters: 568 | Adverbs: 4
+#     Characters/Word: 4.4 | Words/Sentence: 18.4
+#     - sentence structure
 
 # # Parse Text
 # I have recently come across the [spaCy](https://spacy.io) library, which bills itself as a "library for industrial-strength natural language processing in Python and Cython," and this seemd like a good opportunity to explore its capabilities. The starting point is a parsing function that parses, tags and detects entities all in one go.
@@ -346,6 +345,13 @@ show_freq(prob_books)
 
 # In[ ]:
 
+probs1 = probs(bktks[1])
+probs2 = probs(bktks[2])
+# probs12 = probs1 + probs2
+
+
+# In[ ]:
+
 def show_unc_word_trend():
     n = 200
     s1 = Series(probs1).sort_values(ascending=True).reset_index(drop=1)
@@ -354,11 +360,11 @@ def show_unc_word_trend():
     s2[s2 < -12][:n].plot(title='Log probability for $n$ rarest words')
     plt.legend(['Book 1', 'Book 2'])
     
+plt.figure(figsize=(8, 5))
 show_unc_word_trend()
 xo, xi = plt.xlim()
 plt.hlines([-18.25], xo , xi, linestyles='dashdot')
 plt.hlines([-18.32], xo , xi, linestyles='dashdot');
-assert False, "Resize plot"
 
 
 # Starting from the least common words, it looks like the part of the reason Book 2's words are less frequent is due to a few streaks of words that have log probabilities indicated by the dashed lines. The repetition of certain uncommon words in the story line could lead us to classify some text as more complex than we should. A solution would be to run the same plots on the probabilities of *unique* words in the texts.
@@ -401,7 +407,7 @@ plt.ylabel('Mean log p'); plt.xlabel('Total word count');
 # In[ ]:
 
 def plot_corrcoef(x=None, y=None, data=None):
-    sns.regplot(x=x, y=y, data=data)
+    sns.regplot(x=x, y=y, data=data, order=1)
     plt.title('Corr. Coef.: {:.3f}'.format(stats.pearsonr(data[x], data[y])[0]))
     plt.ylabel('Mean log p')
     plt.xlabel('Total word count');
@@ -412,6 +418,11 @@ plot_corrcoef(x='Word_count', y='Mean', data=ufreq.assign(Word_count=wc))
 
 
 # Indeed, the relationship between typical word appears to have a quite [log] linear relationship with word count. I'm not sure what relationship is to be expected, but it looks like it would be worthwhile to try and correct for document length in determining word complexity. 
+
+# In[ ]:
+
+import numpy.random as nr
+
 
 # In[ ]:
 
@@ -489,10 +500,7 @@ def sim_gen_text(worddist=5, sizebook=1, nsims=10000,
     return ret 
 
 
-# In[ ]:
-
-get_ipython().magic('time x = sim_gen_text(worddist=5, sizebook=5, nsims=100, aggfunc=np.mean, rep=True)')
-
+# %time x = sim_gen_text(worddist=5, sizebook=5, nsims=100, aggfunc=np.mean, rep=True)
 
 # In[ ]:
 
@@ -528,10 +536,7 @@ def get_gen_prob_text(nsims=10000, n_jobs=-1, worddist=5, usecache=True,
 get_ipython().magic('time d1 = get_gen_prob_text(nsims=10000, worddist=8, n_jobs=-1, rep=False)')
 
 
-# In[ ]:
-
-get_ipython().magic('time d1 = get_gen_prob_text(nsims=20000, n_jobs=-1)')
-
+# %time d1 = get_gen_prob_text(nsims=20000, n_jobs=-1)
 
 # In[ ]:
 
@@ -566,29 +571,140 @@ plt.scatter(pbothagg.index, pbothagg.Actual, s=80, c='k', marker='x', linewidth=
 
 # In[ ]:
 
+plt.figure(figsize=(16, 5))
+plt.subplot(1, 2, 1)
 bothagg.unstack('Source')['Val'].eval('Simulation - Actual').plot(title='Average - actual word complexity');
+plt.subplot(1, 2, 2)
+plot_corrcoef(x='Word_count', y='Mean', data=d.groupby(['Book']).mean().rename(columns={'Val': 'Mean'}).assign(Word_count=wc))
 
+
+# To the right, we also see that at least the simulated values are much better estimated by a linear word count predictor (negative correlation coefficient of .985 for the simulated vs .935 for the actual averages). 
 
 # In[ ]:
 
 DataFrame(Series({k: ((v.Val < ufreq.Mean[k]).mean() * 100).round(1) for k, v in d.groupby('Book')})).T
 
 
-# In[ ]:
-
-plot_corrcoef(x='Word_count', y='Mean', data=d.groupby(['Book']).mean().rename(columns={'Val': 'Mean'}).assign(Word_count=wc))
-
+# ## Sentence structure complexity
 
 # In[ ]:
 
-sns.regplot(x='Word_count', y='Mean', data=simplot)
-simplot = d.groupby(['Book']).mean().rename(columns={'Val': 'Mean'}).assign(Word_count=wc)
-plt.title('Corr. Coef.: {:.3f}'.format(stats.pearsonr(simplot.Mean, wc)[0]));
+import networkx as nx
+import pygraphviz as pgv
 
 
 # In[ ]:
 
-plt.hist(gens_mu, bins=30);
+s = next(bktksall[1].sents)
+
+
+# G = nx.DiGraph()
+# G.add_edge
+# ts = bktksall[1]
+# for s in ts.sents:
+#     break
+# s.root.head is s.root
+# list(s.root.children)
+# s
+# s.root.
+# child.n_lefts
+
+# In[ ]:
+
+There are different ways to measure the complexity of a sentence based on the syntactical structure, 
+
+
+# In[ ]:
+
+for a in [a for a in dir(w1) if not a.startswith('__')]:
+    f1, f2 = getattr(w1, a), getattr(w2, a)
+    if callable(f1):
+        try:
+            eq = f1() == f2()
+            print(a, eq)
+        except TypeError:
+            pass
+    else:
+        print(a, f1 == f2)
+    
+
+
+# In[ ]:
+
+def dedupe_wrd_repr(s):
+    d = {}
+    dfd = defaultdict(int)
+    for tok in s:
+        dfd[tok.orth_] += 1
+        n = dfd[tok.orth_]
+        print(tok.i, tok, n)
+        if n > 1:
+            d['{}[{}]'.format(tok.orth_, n)] = tok.i
+        else:
+            d[tok.orth_] = tok.i
+    return {v: k for k, v in d.items()}
+
+dd = dedupe_wrd_repr(s)
+
+
+# In[ ]:
+
+def add_edge(src, dst, G, reprdct=None, ):  # seen=set()
+    """Since this is a tree, append an underscore for duplicate
+    destination nodes"""
+    s1, s2 = src.orth_, dst.orth_
+    s1, s2 = src.i, dst.i
+#     if s2 in seen:
+#         s2 = '{}_'.format(s2)
+#         seen.add(s2)
+    return G.add_edge(reprdct[s1], reprdct[s2])
+
+
+# In[ ]:
+
+def add_int_edge(tok, c, G, **_):
+    G.add_edge(tok.i, c.i)
+
+
+# In[ ]:
+
+def build_graph(tok, G, i=0, vb=False, reprdct=None, add_edge=add_edge):
+    pp = print if vb else (lambda *x, **k: None)
+#     if seen is None:
+#         seen = {tok.orth_}
+    pp(' ' * i, tok)
+        
+    for c in tok.children:
+        add_edge(tok, c, G, reprdct=reprdct)
+        build_graph(c, G, i=i + 2, reprdct=reprdct, add_edge=add_edge)
+    return G
+
+G = build_graph(s.root, pgv.AGraph(directed=True), vb=0, reprdct=dd)
+Gi = build_graph(s.root, pgv.AGraph(directed=True), vb=0, reprdct=dd, add_edge=add_int_edge)
+
+
+# In[ ]:
+
+G.draw("file.png", prog='dot')
+print(s)
+Image(filename="file.png") 
+
+
+# In[ ]:
+
+def tree_depths(s):
+    def tree_depths_(tok, i=1, vb=False,):
+        return [i] + [t for c in tok.children
+                      for t in tree_depths_(c, i=i + 1, vb=vb)]
+        #return [(i, tok)]
+    return tree_depths_(s.root, i=1)
+
+# tree_depths(s)
+
+
+# In[ ]:
+
+
 
 
 # #Benchmark Joblib
@@ -823,9 +939,7 @@ uprob_books[:2]
 
 # In[ ]:
 
-probs1 = probs(bktks[1])
-probs2 = probs(bktks[2])
-probs12 = probs1 + probs2
+
 
 
 # In[ ]:
