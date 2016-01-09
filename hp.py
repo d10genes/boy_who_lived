@@ -3,29 +3,30 @@
 
 # In[ ]:
 
-from py3k_fix import *
-
-
-# In[ ]:
-
 get_ipython().run_cell_magic('javascript', '', "IPython.keyboard_manager.command_shortcuts.add_shortcut('Ctrl-k','ipython.move-selected-cell-up')\nIPython.keyboard_manager.command_shortcuts.add_shortcut('Ctrl-j','ipython.move-selected-cell-down')\nIPython.keyboard_manager.command_shortcuts.add_shortcut('Shift-m','ipython.merge-selected-cell-with-cell-after')")
 
 
 # In[ ]:
 
+from py3k_fix import *
+
 from collections import namedtuple, Counter, defaultdict, OrderedDict
 from functools import wraps, partial
 from glob import glob
 from itertools import count
+import itertools as it
 import operator as op
 from operator import itemgetter as itg, attrgetter as prop, methodcaller as mc
 from os.path import join
 import re
 import sys
-import warnings
+from tempfile import mkdtemp
+import warnings; warnings.filterwarnings("ignore")
 
-from joblib import Parallel, delayed
+
+from joblib import Parallel, delayed, Memory
 import numpy as np
+import numpy.random as nr
 import matplotlib.pyplot as plt
 from pandas import DataFrame, Series
 import pandas as pd
@@ -35,11 +36,13 @@ import toolz.curried as z
 
 from IPython.display import Image
 
-warnings.filterwarnings("ignore")
 p = print
 pd.options.display.notebook_repr_html = False
 pd.options.display.width = 120
 get_ipython().magic('matplotlib inline')
+
+cachedir = mkdtemp()
+memory = Memory(cachedir=cachedir, verbose=0)
 
 
 # pat = re.compile(r'.+? HP (\d+).+')
@@ -198,6 +201,8 @@ bktks = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bks.tx
 bktksall = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bksall.txts.items()}
 
 
+# TODO: explain functions
+
 # In[ ]:
 
 def tobooks(f: '(toks, int) -> DataFrame', bks=bktks) -> DataFrame:
@@ -210,7 +215,11 @@ def tobooks(f: '(toks, int) -> DataFrame', bks=bktks) -> DataFrame:
 def booker(f: 'toks -> [str]') -> '(toks, int) -> DataFrame':
     @wraps(f)
     def tobookdf(toks, bknum):
-        df = DataFrame(f(toks), columns=['Val'])
+        res = f(toks)
+        if np.ndim(res) == 1:
+            df = DataFrame(f(toks), columns=['Val'])
+        else:
+            df = res
         df['Book'] = bknum
         return df
     return tobookdf
@@ -258,11 +267,6 @@ wsls.Sentence_length['Mean'].plot(title='Average sentence length');
 
 
 # There does appear to be an increasing trend for both average word and sentence length difference between the books, though the scale of the difference is miniscule in light of the standard deviations.
-
-# In[ ]:
-
-# tt = bktks[1]
-
 
 # ## Word complexity by frequency
 # 
@@ -421,11 +425,6 @@ plot_corrcoef(x='Word_count', y='Mean', data=ufreq.assign(Word_count=wc))
 
 # In[ ]:
 
-import numpy.random as nr
-
-
-# In[ ]:
-
 def simgrowth(toks, nsims=20):
     def simgrowth_():
         s = set()
@@ -504,21 +503,13 @@ def sim_gen_text(worddist=5, sizebook=1, nsims=10000,
 
 # In[ ]:
 
+@memory.cache
 def get_gen_prob_text(nsims=10000, n_jobs=-1, worddist=5, usecache=True,
                       rep=False):
     """Run simulations and cache them (running ~10k sims
     for each book) takes ~10 min."""
     fn = 'cache/gen_prob_text_{}_{}_{}.csv'.format(worddist, rep, nsims)
     
-    def gen_prob_text_read():
-        return pd.read_csv(fn).rename(columns=int)
-
-    if usecache:
-        try:
-            return gen_prob_text_read()
-        except IOError:
-            print('{} not found, running simulations...'.format(fn))
-            sys.stdout.flush()
     
     gens_mus = {
         booknum: sim_gen_text(worddist=worddist, sizebook=booknum,
@@ -526,26 +517,38 @@ def get_gen_prob_text(nsims=10000, n_jobs=-1, worddist=5, usecache=True,
         for booknum in range(1, 8)
     }
     d = DataFrame(gens_mus)
+    return d
+    def gen_prob_text_read():
+        return pd.read_csv(fn).rename(columns=int)
+
+    if False:
+        try:
+            return gen_prob_text_read()
+        except IOError:
+            print('{} not found, running simulations...'.format(fn))
+            sys.stdout.flush()
     d.to_csv(fn, index=None)
     return gen_prob_text_read()
     
 
+def join_sim_act(simdf_):
+    cols = ['Val', 'Book', 'Source']
+    simdf = simdf_.copy()
+    simdf.columns.name = 'Book'
+    simdf = simdf.stack().sort_index(level='Book').reset_index(drop=0).rename(columns={0: 'Val'}).drop('level_0', axis=1)
+    simdf['Source'] = 'Simulation'
+    dboth = simdf[cols].append(uprob_books.assign(Source='Actual')[cols]).sort_values(['Book', 'Source'], ascending=True)
+    return dboth, simdf
+
 
 # In[ ]:
 
-get_ipython().magic('time d1 = get_gen_prob_text(nsims=10000, worddist=8, n_jobs=-1, rep=False)')
+get_ipython().magic('time simdf_ = get_gen_prob_text(nsims=10000, worddist=8, n_jobs=-1, rep=False)')
 
-
-# %time d1 = get_gen_prob_text(nsims=20000, n_jobs=-1)
 
 # In[ ]:
 
-cols = ['Val', 'Book', 'Source']
-d = d1.copy()
-d.columns.name = 'Book'
-d = d.stack().sort_index(level='Book').reset_index(drop=0).rename(columns={0: 'Val'}).drop('level_0', axis=1)
-d['Source'] = 'Simulation'
-dboth = d[cols].append(uprob_books.assign(Source='Actual')[cols]).sort_values(['Book', 'Source'], ascending=True)
+dboth, simdf = join_sim_act(simdf_)
 
 
 # In[ ]:
@@ -561,7 +564,7 @@ pbothagg = bothagg.ix['Actual'].copy().rename(columns={'Val': 'Actual'})
 pbothagg.index -= 1
 plt.scatter([], [], s=80, c='k', marker='x', linewidth=2)
 plt.legend(['Actual']);
-sns.violinplot('Book', 'Val', data=d)
+sns.violinplot('Book', 'Val', data=simdf)
 plt.scatter(pbothagg.index, pbothagg.Actual, s=80, c='k', marker='x', linewidth=2);
 
 
@@ -575,27 +578,24 @@ plt.figure(figsize=(16, 5))
 plt.subplot(1, 2, 1)
 bothagg.unstack('Source')['Val'].eval('Simulation - Actual').plot(title='Average - actual word complexity');
 plt.subplot(1, 2, 2)
-plot_corrcoef(x='Word_count', y='Mean', data=d.groupby(['Book']).mean().rename(columns={'Val': 'Mean'}).assign(Word_count=wc))
+plot_corrcoef(x='Word_count', y='Mean', data=simdf.groupby(['Book']).mean().rename(columns={'Val': 'Mean'}).assign(Word_count=wc))
 
 
 # To the right, we also see that at least the simulated values are much better estimated by a linear word count predictor (negative correlation coefficient of .985 for the simulated vs .935 for the actual averages). 
 
 # In[ ]:
 
-DataFrame(Series({k: ((v.Val < ufreq.Mean[k]).mean() * 100).round(1) for k, v in d.groupby('Book')})).T
+DataFrame(Series({k: ((v.Val < ufreq.Mean[k]).mean() * 100).round(1) for k, v in simdf.groupby('Book')})).T
 
 
 # ## Sentence structure complexity
 
+# There are different ways to measure the complexity of a sentence based on the syntactical structure, 
+
 # In[ ]:
 
-import networkx as nx
+# import networkx as nx
 import pygraphviz as pgv
-
-
-# In[ ]:
-
-s = next(bktksall[1].sents)
 
 
 # G = nx.DiGraph()
@@ -611,100 +611,414 @@ s = next(bktksall[1].sents)
 
 # In[ ]:
 
-There are different ways to measure the complexity of a sentence based on the syntactical structure, 
-
-
-# In[ ]:
-
-for a in [a for a in dir(w1) if not a.startswith('__')]:
-    f1, f2 = getattr(w1, a), getattr(w2, a)
-    if callable(f1):
-        try:
-            eq = f1() == f2()
-            print(a, eq)
-        except TypeError:
-            pass
-    else:
-        print(a, f1 == f2)
-    
-
-
-# In[ ]:
-
 def dedupe_wrd_repr(s):
     d = {}
     dfd = defaultdict(int)
     for tok in s:
         dfd[tok.orth_] += 1
         n = dfd[tok.orth_]
-        print(tok.i, tok, n)
+        #print(tok.i, tok, n)
         if n > 1:
             d['{}[{}]'.format(tok.orth_, n)] = tok.i
         else:
             d[tok.orth_] = tok.i
     return {v: k for k, v in d.items()}
 
-dd = dedupe_wrd_repr(s)
-
-
-# In[ ]:
-
-def add_edge(src, dst, G, reprdct=None, ):  # seen=set()
+def add_edge(src, dst, G, reprdct=None):
     """Since this is a tree, append an underscore for duplicate
     destination nodes"""
-    s1, s2 = src.orth_, dst.orth_
-    s1, s2 = src.i, dst.i
-#     if s2 in seen:
-#         s2 = '{}_'.format(s2)
-#         seen.add(s2)
-    return G.add_edge(reprdct[s1], reprdct[s2])
+    G.add_edge(reprdct[src.i], reprdct[dst.i])
+    
+def add_int_edge(src, dst, G, **_):
+    G.add_edge(src.i, dst.i)
 
 
 # In[ ]:
 
-def add_int_edge(tok, c, G, **_):
-    G.add_edge(tok.i, c.i)
+def build_graph(s, add_edge=add_edge):
+    G = pgv.AGraph(directed=True)
+    reprdct = dedupe_wrd_repr(s)
+    
+    def build_graph_(tok, i=0):
+        for c in tok.children:
+            add_edge(tok, c, G, reprdct=reprdct)
+            build_graph_(c, i=i + 2)
+        return G
+    return build_graph_(s.root)
+
+
+def show_graph(g):
+    g.draw("file.png", prog='dot')
+    return Image(filename="file.png") 
+
+
+s = next(bktksall[1].sents)
+G = build_graph(s)
+Gi = build_graph(s, add_edge=add_int_edge)
 
 
 # In[ ]:
 
-def build_graph(tok, G, i=0, vb=False, reprdct=None, add_edge=add_edge):
-    pp = print if vb else (lambda *x, **k: None)
-#     if seen is None:
-#         seen = {tok.orth_}
-    pp(' ' * i, tok)
-        
-    for c in tok.children:
-        add_edge(tok, c, G, reprdct=reprdct)
-        build_graph(c, G, i=i + 2, reprdct=reprdct, add_edge=add_edge)
-    return G
-
-G = build_graph(s.root, pgv.AGraph(directed=True), vb=0, reprdct=dd)
-Gi = build_graph(s.root, pgv.AGraph(directed=True), vb=0, reprdct=dd, add_edge=add_int_edge)
+show_graph(G)
 
 
 # In[ ]:
 
-G.draw("file.png", prog='dot')
-print(s)
-Image(filename="file.png") 
-
-
-# In[ ]:
-
-def tree_depths(s):
+def tree_depths(s, senti=None):
     def tree_depths_(tok, i=1, vb=False,):
-        return [i] + [t for c in tok.children
+        return [(i, senti)] + [t for c in tok.children
                       for t in tree_depths_(c, i=i + 1, vb=vb)]
-        #return [(i, tok)]
     return tree_depths_(s.root, i=1)
 
-# tree_depths(s)
+
+def sent_depth_bk(toks):
+    return DataFrame([(depth, i) for i, s in 
+                      enumerate(toks.sents)
+                      for depth, senti in tree_depths(s, senti=i)],
+                    columns=['Depth', 'Sentnum'])
+
+
+sent_depths = over_books(sent_depth_bk).reset_index(drop=1)
+
+
+# In[ ]:
+
+sgb = (sent_depths.groupby(['Book']).Depth
+       .agg(['mean', 'median', 'max', 'idxmax'])
+       .rename(columns=str.capitalize))
+sgb
+
+
+# In[ ]:
+
+s1 = sent_depths.query('Book == 1')
+
+
+# In[ ]:
+
+def sim_depth(s, seed=None, size=None, aggfunc=None):
+    return aggfunc(s.sample(n=size, replace=True, random_state=seed))
+
+
+@memory.cache
+def bootstrap_depths(df, by='Book', col=None, aggfunc=np.mean,
+                     nsims=10, size=1000, n_jobs=1):
+    genmkr = lambda s: (delayed(sim_depth)(s, seed=seed, aggfunc=aggfunc, size=size) for seed in range(nsims))
+    df = DataFrame({bknum: Parallel(n_jobs=n_jobs)(genmkr(gbs)) for bknum, gbs in df.groupby(by)[col]} )
+    return df
+
+
+# In[ ]:
+
+get_ipython().magic("time bootdepths2 = bootstrap_depths(sent_depths, by='Book', col='Depth', nsims=10000, n_jobs=-1)")
+
+
+# In[ ]:
+
+get_ipython().magic("time bootdepths = bootstrap_depths(sent_depths, by='Book', col='Depth', nsims=10000, n_jobs=-1)")
+
+
+# In[ ]:
+
+def piv(df):
+    df.columns.name = by
+    return (df.unstack().reset_index(drop=0).drop('level_1', axis=1)
+            .rename(columns={0: 'Val'}))
+
+
+# In[ ]:
+
+# def get_bt_diff_(bka, bkb, df=bootdepths):
+#     return Series(df.query('Book == %s' % bka).Val.values
+#                   - df.query('Book == %s'  % bkb).Val.values)
+
+# def get_bt_diff(bka, bkb, df=bootdepths):
+#     return Series(df[bka] - df[bkb].Val
+
+
+# Here are the simulated average depths of each word by book for comparison:
+
+# In[ ]:
+
+mod_axis(sgb, z.operator.add(-1)).Mean.plot()
+sns.violinplot(x='Book', y='Val', data=bootdepths);
+
+
+# A difference of 0 doesn't overlap much (if at all) with the distribution of the bootstrapped samples, giving us reason to believe that the difference in syntactical complexity is significant at least between books 1 and 5. This contrasts with the difference between books 1 and 2--while the the average difference is about .05 levels, the simulations make a hypothesis of 0 difference look plausible:
+
+# In[ ]:
+
+plt.figure(figsize=(16, 5))
+plt.subplot(1, 2, 1, title='Average depth: Book 5 - book 1')
+get_bt_diff_(5, 1).hist(bins=50)
+plt.vlines(0, *plt.ylim())
+plt.xlim(-.05, None)
+
+plt.subplot(1, 2, 2, title='Average depth: Book 2 - book 1')
+get_bt_diff_(2, 1).hist(bins=50)
+plt.vlines(0, *plt.ylim());
+
+
+# ### Height
+
+# One more metric I would like to look at is the average 'height' of the sentences by books. While I previously looked at the average depth of each word in the syntax tree, this will just talky the maximum depth of each sentence.
+
+# In[ ]:
+
+maxdepth = (sent_depths.groupby(['Book', 'Sentnum']).Depth.max()
+        .reset_index(drop=0))
+sgbs = (maxdepth.groupby(['Book']).Depth
+        .agg(['mean', 'median', 'max'])
+        .rename(columns=str.capitalize)
+       )
+sgbs
+
+
+# Here again we see a bit of variation in the average sentence height by each book, but it's not obvious whether these differences are significant. Time for the bootstrap again!
+
+# In[ ]:
+
+get_ipython().magic("time bootheights = bootstrap_depths(maxdepth, by='Book', col='Depth', nsims=100000, n_jobs=-1, size=1000)")
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 5))
+d51 = bootheights[5] - bootheights[1]
+t51 = ('Average depth: Book 5 - book 1 \n(0 > difference in {:.2%}'
+       ' of examples)'.format((0 > d51).mean()))
+plt.subplot(1, 2, 1, title=t51)
+d51.hist(bins=50)
+plt.vlines(0, *plt.ylim())
+
+d21 = bootheights[2] - bootheights[1]
+t21 = ('Average depth: Book 2 - book 1 \n(0 > difference in {:.2%}'
+       ' of examples)'.format((0 > d21).mean()))
+plt.subplot(1, 2, 2, title=t21)
+d21.hist(bins=50)
+plt.vlines(0, *plt.ylim());
+
+
+# In the case of measuring the difference in average sentence *heights* between the books, we have much more confidence that the difference in books 5 and 1 *and* between  ad 1 were not due to chance.
+
+# In[ ]:
+
+sns.violinplot(data=bootheights);
+
+
+# In[ ]:
+
+bootheights[:4]
+
+
+# In[ ]:
+
+bootdepths.pivot(index=None, columns='Book', values='Val')
+
+
+# In[ ]:
+
+bootdepths.reset_index(drop=0).set_index(['index', 'Book']).unstack()
+
+
+# In[ ]:
+
+bootdiff.idxmin()
+
+
+# In[ ]:
+
+def mod_axis(df, f, axis=0):
+    df = df.copy()
+    if not axis:
+        df.index = f(df.index)
+    else:
+        df.columns = f(df.columns)
+    return df
+
+
+# In[ ]:
+
+bootdepths.query('Book == 5').Val - bootdepths.query('Book == 1').Val
+
+
+# In[ ]:
+
+sns.violinplot(x='Book', y='Val', data=dct)
+
+
+# The average depth of a word looks higher in book 5 than in book 1, but it's hard to tell if the difference is large enough to rule out the difference's being due to chance. One way to get an idea of the difference being this great would be to shuffle the labels (see Jake VanderPlas' [Statistics for Hackers](https://speakerdeck.com/jakevdp/statistics-for-hackers) talk for an explanation).
+
+# In[ ]:
+
+sents = sent_depths.query('Book == [1, 5]')
+
+
+# In[ ]:
+
+sents.Depth
+
+
+# In[ ]:
+
+n1, n5 = sents.Book.value_counts(normalize=0).ix[[1, 5]]
+
+
+# In[ ]:
+
+n1
+
+
+# In[ ]:
+
+sdepths = np.array(sents.Depth)
 
 
 # In[ ]:
 
 
+
+
+# In[ ]:
+
+n1
+
+
+# In[ ]:
+
+labs
+
+
+# In[ ]:
+
+get_ipython().magic('timeit nr.shuffle(sdepths)')
+
+
+# In[ ]:
+
+N = len(labs)
+p = n1 / N
+lbs = nr.binomial(1, p, N)
+
+
+# In[ ]:
+
+@memory.cache
+def sim_diff(vals, n1, aggf=np.mean, nsims=10):
+    N = len(vals)
+    p = n1 / N
+    
+    def sim_diff_(_):
+        lbs = nr.binomial(1, p, N)
+        g1 = aggf(vals[lbs == 0])
+        g2 = aggf(vals[lbs == 1])
+        return g2 - g1
+    
+    return map(sim_diff_, range(nsims))
+
+
+# In[ ]:
+
+get_ipython().magic("time difs = sim_diff(sents.Depth.values, len(sents.query('Book == 1')), aggf=np.mean, nsims=10000)")
+
+
+# In[ ]:
+
+get_ipython().system('say "I am your wretched slave, master"')
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+sgb.Mean[5] - sgb.Mean[1]
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 5))
+plt.hist(difs, bins=50)
+plt.vlines(sgb.Mean[5] - sgb.Mean[1], *plt.ylim())
+plt.legend(['Actual difference'], loc=2);
+
+
+# So while the actual difference of .27 looks pretty small, this is actually pretty large compared to the simulated variability.
+
+# In[ ]:
+
+a = np.array([0, 1])
+ps = np.array([n1 / N, n5 / N])
+
+
+# In[ ]:
+
+get_ipython().magic('timeit nr.choice(a, size=N, p=ps)')
+
+
+# In[ ]:
+
+sents
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+maxdepth[:3]
+
+
+# In[ ]:
+
+sns.violinplot('Book', 'Depth', data=sent_depths)
+
+
+# In[ ]:
+
+sns.violinplot('Book', 'Depth', data=maxdepth)
+
+
+# In[ ]:
+
+sent_depths.ix[sent_depths.Depth.idxmax()]
+
+
+# In[ ]:
+
+Here is the complexity of the 
+
+
+# In[ ]:
+
+_, maxsentnum, maxbooknum = sent_depths.ix[sent_depths.Depth.idxmax()]
+[sent] = list(it.islice(bktksall[maxbooknum].sents, int(maxsentnum), int(maxsentnum + 1)))
+print(sent)
+show_graph(build_graph(sent))
+
+
+# In[ ]:
+
+sent_depths[:4]
+
+
+# In[ ]:
+
+sent1 = sent_depth_bk(1)
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+sent1.Depth.mean()
 
 
 # #Benchmark Joblib
