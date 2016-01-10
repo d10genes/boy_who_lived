@@ -41,7 +41,7 @@ pd.options.display.notebook_repr_html = False
 pd.options.display.width = 120
 get_ipython().magic('matplotlib inline')
 
-cachedir = mkdtemp()
+cachedir = 'cache/' # mkdtemp()
 memory = Memory(cachedir=cachedir, verbose=0)
 
 
@@ -59,153 +59,42 @@ memory = Memory(cachedir=cachedir, verbose=0)
 #     #     doc = Rtf15Reader.read(f)
 #     t = txt[:60000]
 
-# # Load and Clean Text
+# # Load, clean and parse text
+# See `utils.py` for cleaning and parsing details.
 
 # In[ ]:
 
-# with open('src/nltk_stopwords.txt', 'r') as f:
+import utils as ut; reload(ut);
+
+
+# In[ ]:
+
+bksall = ut.BookSeries(7)
+
 with open('src/stops.txt', 'r') as f:
     stops = set(l for l in f.read().splitlines() if l and not l.startswith('#'))
 
 
-# In[ ]:
-
-Chapter = namedtuple('Chapter', 'num title text')
-
-
-class Book(object):
-    def __init__(self, title, chapters: {int: Chapter}):
-        self.chapters = chapters
-        self.title = title
-        self.txts = OrderedDict()
-        for n, chap in sorted(chapters.items()):
-            setattr(self, 't{}'.format(n), chap.text)
-            self.txts[n] = chap.text
-        txt = reduce(op.add, self.txts.values())
-        self.txt = clean_text(txt)
-
-
-class BookSeries(object):
-    def __init__(self, n=7):
-        bks = {i: parsebook(i, vb=False) for i in range(1, n + 1)}
-        
-        self.txts = OrderedDict()
-        for n, bk in sorted(bks.items()):
-            setattr(self, 'b{}'.format(n), bk.txt)
-            self.txts[n] = bk.txt
-        txt = reduce(op.add, self.txts.values())
-        self.txt = clean_text(txt)
-
+# I recently came across the [spaCy](https://spacy.io) library, which bills itself as a "library for industrial-strength natural language processing in Python and Cython," and this seemed like a good opportunity to explore its capabilities. The starting point is a parsing function that parses, tags and detects entities all in one go.
 
 # In[ ]:
 
-bookpat = re.compile(r'''\A(?P<title>.+)
-(?!(.+)+?)
-(?P<body>(Chapter 1)\n+(.+\n+)+)''')
-
-bookpat = re.compile(r'''\A(?P<title>.+)
-\n*
-(?:(?:.+\n+)+?)
-(?P<body>
-    (Chapter\ 1)
-    \n+
-    (.+\n*)+
-)''', re.VERBOSE)
-
-chappat = re.compile(r'''(Chapter (\d+)\n+((?:.+\n+)+))+''')
-chapsep = re.compile(r'Chapter (\d+)\n(.+)\n+')
-# m = bookpat.match(t)
-# gd = m.groupdict()
-# title = gd['title']
-# body = gd['body']
-# gd
-# m
-# m.groupdict()
-
-
-# book = {int(chnum): Chapter(int(chnum), title, text) for chnum, title, text in z.partition(3, chs)}
-# bk = Book(book)
-# book
-
-# In[ ]:
-
-def parsebook(fn="src/txt/hp1.txt", vb=False):
-    global txt
-    p = print if vb else (lambda *x, **y: None)
-    if isinstance(fn, int):
-        fn = "src/txt/hp{}.txt".format(fn)
-    p('Reading {}'.format(fn)) 
-    with open(fn,'rb') as f:
-        txt = f.read().decode("utf-8-sig")
-        
-    gd = bookpat.search(txt).groupdict()
-    
-    booktitle = gd['title']
-    body = gd['body']
-
-    chs = chapsep.split(body)[1:]
-    book = {int(chnum): Chapter(int(chnum), title, text) for chnum, title, text in z.partition(3, chs)}
-    return Book(booktitle, book)
-
-
-def clean_text(t):
-    reps = {
-        '’': "'",
-        '‘': "'",
-        '“': '"',
-        '”': '"',
-        '\xad': '',
-        '—': '-',
-       }
-    
-    def rep(s, frto):
-        fr, to = frto
-        return s.replace(fr, to)
-    t = reduce(rep, reps.items(), t)
-    return t
-
-# bk = parsebook()
-bks = BookSeries(5)
-bksall = BookSeries(7)
-# bk = bks.b1
-
-
-# In[ ]:
-
-Counter(filter(lambda x: not re.match(r'[\dA-Za-z \."\'\-\(\);:!\?,\n]', x), bks.b1))
-
-
-#     Complexity
-#     - avg word length (syllables?)
-#     - avg sentence length
-# 
-#     - Words: 129 | Syllables: 173 | Sentences: 7 | Characters: 568 | Adverbs: 4
-#     Characters/Word: 4.4 | Words/Sentence: 18.4
-#     - sentence structure
-
-# # Parse Text
-# I have recently come across the [spaCy](https://spacy.io) library, which bills itself as a "library for industrial-strength natural language processing in Python and Cython," and this seemd like a good opportunity to explore its capabilities. The starting point is a parsing function that parses, tags and detects entities all in one go.
-
-# In[ ]:
-
-# import spacy.parts_of_speech as ps
-# import spacy.en
 from spacy.en import English
-
-nlp = English()
+from spacy.parts_of_speech import ADJ
+get_ipython().magic('time nlp = English()')
 
 
 # In[ ]:
 
-bktks = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bks.txts.items()}
+# bktks = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bks.txts.items()}
 bktksall = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bksall.txts.items()}
 
 
-# TODO: explain functions
+# I'll be writing a bunch of functions that take a list of tokens and returns a list of processed strings, numbers, etc. The following higher order functions are to facilitate applying these `[Token] -> [a]` functions to the entire Harry Potter series, returning a dataframe that keeps track of which book the processed value in a given row came from.
 
 # In[ ]:
 
-def tobooks(f: '(toks, int) -> DataFrame', bks=bktks) -> DataFrame:
+def tobooks(f: '(toks, int) -> DataFrame', bks=bktksall) -> DataFrame:
     """Apply a function `f` to all the tokens in each book,
     putting the results into a DataFrame column, and adding
     a column to indicate each book.
@@ -225,6 +114,20 @@ def booker(f: 'toks -> [str]') -> '(toks, int) -> DataFrame':
     return tobookdf
     
 over_books = z.comp(partial(tobooks, bks=bktksall), booker)
+
+
+# As an example, a function that takes a stream of tokens and returns the first 2 words that are adjectives,
+
+# In[ ]:
+
+fst_2_nouns = lambda xs: list(it.islice((x.orth_ for x in xs if x.pos == ADJ), 2))
+
+
+# can be applied to each book in the series as:
+
+# In[ ]:
+
+over_books(fst_2_nouns)
 
 
 # # Search for increasing complexity
@@ -349,8 +252,8 @@ show_freq(prob_books)
 
 # In[ ]:
 
-probs1 = probs(bktks[1])
-probs2 = probs(bktks[2])
+probs1 = probs(bktksall[1])
+probs2 = probs(bktksall[2])
 # probs12 = probs1 + probs2
 
 
@@ -366,9 +269,7 @@ def show_unc_word_trend():
     
 plt.figure(figsize=(8, 5))
 show_unc_word_trend()
-xo, xi = plt.xlim()
-plt.hlines([-18.25], xo , xi, linestyles='dashdot')
-plt.hlines([-18.32], xo , xi, linestyles='dashdot');
+plt.hlines([-18.25, -18.32], *plt.xlim(), linestyles='dashdot')
 
 
 # Starting from the least common words, it looks like the part of the reason Book 2's words are less frequent is due to a few streaks of words that have log probabilities indicated by the dashed lines. The repetition of certain uncommon words in the story line could lead us to classify some text as more complex than we should. A solution would be to run the same plots on the probabilities of *unique* words in the texts.
@@ -437,7 +338,7 @@ def simgrowth(toks, nsims=20):
         return l
     return [simgrowth_() for _ in range(nsims)]
 
-ls = simgrowth(bktks[1])
+ls = simgrowth(bktksall[1])
 
 
 # In[ ]:
@@ -504,13 +405,7 @@ def sim_gen_text(worddist=5, sizebook=1, nsims=10000,
 # In[ ]:
 
 @memory.cache
-def get_gen_prob_text(nsims=10000, n_jobs=-1, worddist=5, usecache=True,
-                      rep=False):
-    """Run simulations and cache them (running ~10k sims
-    for each book) takes ~10 min."""
-    fn = 'cache/gen_prob_text_{}_{}_{}.csv'.format(worddist, rep, nsims)
-    
-    
+def get_gen_prob_text(nsims=10000, n_jobs=-1, worddist=5, rep=False):
     gens_mus = {
         booknum: sim_gen_text(worddist=worddist, sizebook=booknum,
                               nsims=nsims, aggfunc=np.mean, n_jobs=n_jobs, rep=rep)
@@ -518,18 +413,6 @@ def get_gen_prob_text(nsims=10000, n_jobs=-1, worddist=5, usecache=True,
     }
     d = DataFrame(gens_mus)
     return d
-    def gen_prob_text_read():
-        return pd.read_csv(fn).rename(columns=int)
-
-    if False:
-        try:
-            return gen_prob_text_read()
-        except IOError:
-            print('{} not found, running simulations...'.format(fn))
-            sys.stdout.flush()
-    d.to_csv(fn, index=None)
-    return gen_prob_text_read()
-    
 
 def join_sim_act(simdf_):
     cols = ['Val', 'Book', 'Source']
@@ -560,8 +443,8 @@ bothagg.unstack('Source')
 # In[ ]:
 
 plt.figure(figsize=(16, 10))
-pbothagg = bothagg.ix['Actual'].copy().rename(columns={'Val': 'Actual'})
-pbothagg.index -= 1
+pbothagg = ut.mod_axis(bothagg.ix['Actual'].copy().rename(columns={'Val': 'Actual'}),
+                       z.operator.add(-1))
 plt.scatter([], [], s=80, c='k', marker='x', linewidth=2)
 plt.legend(['Actual']);
 sns.violinplot('Book', 'Val', data=simdf)
@@ -689,10 +572,7 @@ sgb = (sent_depths.groupby(['Book']).Depth
 sgb
 
 
-# In[ ]:
-
-s1 = sent_depths.query('Book == 1')
-
+# s1 = sent_depths.query('Book == 1')
 
 # In[ ]:
 
@@ -706,11 +586,6 @@ def bootstrap_depths(df, by='Book', col=None, aggfunc=np.mean,
     genmkr = lambda s: (delayed(sim_depth)(s, seed=seed, aggfunc=aggfunc, size=size) for seed in range(nsims))
     df = DataFrame({bknum: Parallel(n_jobs=n_jobs)(genmkr(gbs)) for bknum, gbs in df.groupby(by)[col]} )
     return df
-
-
-# In[ ]:
-
-get_ipython().magic("time bootdepths2 = bootstrap_depths(sent_depths, by='Book', col='Depth', nsims=10000, n_jobs=-1)")
 
 
 # In[ ]:
@@ -740,23 +615,28 @@ def piv(df):
 
 # In[ ]:
 
-mod_axis(sgb, z.operator.add(-1)).Mean.plot()
-sns.violinplot(x='Book', y='Val', data=bootdepths);
+ut.mod_axis(sgb, z.operator.add(-1)).Mean.plot()
+sns.violinplot(data=bootdepths);
 
 
 # A difference of 0 doesn't overlap much (if at all) with the distribution of the bootstrapped samples, giving us reason to believe that the difference in syntactical complexity is significant at least between books 1 and 5. This contrasts with the difference between books 1 and 2--while the the average difference is about .05 levels, the simulations make a hypothesis of 0 difference look plausible:
 
 # In[ ]:
 
-plt.figure(figsize=(16, 5))
-plt.subplot(1, 2, 1, title='Average depth: Book 5 - book 1')
-get_bt_diff_(5, 1).hist(bins=50)
-plt.vlines(0, *plt.ylim())
-plt.xlim(-.05, None)
+def plot_bt_diffs(samps, bka, bkb, subplt=1):
+    diff = samps[bka] - samps[bkb]
+    t51 = ('Average depth: Book {bka} - book {bkb} \n(0 > difference in {perc:.2%}'
+           ' of examples)'.format(bka=bka, bkb=bkb, perc=(0 > diff).mean()))
+    plt.subplot(1, 2, subplt, title=t51)
+    diff.hist(bins=50)
+    plt.vlines(0, *plt.ylim())
 
-plt.subplot(1, 2, 2, title='Average depth: Book 2 - book 1')
-get_bt_diff_(2, 1).hist(bins=50)
-plt.vlines(0, *plt.ylim());
+
+# In[ ]:
+
+plt.figure(figsize=(16, 5))
+plot_bt_diffs(bootdepths, 2, 1, subplt=1)
+plot_bt_diffs(bootdepths, 5, 1, subplt=2)
 
 
 # ### Height
@@ -778,149 +658,24 @@ sgbs
 
 # In[ ]:
 
-get_ipython().magic("time bootheights = bootstrap_depths(maxdepth, by='Book', col='Depth', nsims=100000, n_jobs=-1, size=1000)")
+get_ipython().magic("time bootheights = bootstrap_depths(maxdepth, by='Book', col='Depth', nsims=1000, n_jobs=-1, size=1000)")
 
 
 # In[ ]:
 
 plt.figure(figsize=(16, 5))
-d51 = bootheights[5] - bootheights[1]
-t51 = ('Average depth: Book 5 - book 1 \n(0 > difference in {:.2%}'
-       ' of examples)'.format((0 > d51).mean()))
-plt.subplot(1, 2, 1, title=t51)
-d51.hist(bins=50)
-plt.vlines(0, *plt.ylim())
-
-d21 = bootheights[2] - bootheights[1]
-t21 = ('Average depth: Book 2 - book 1 \n(0 > difference in {:.2%}'
-       ' of examples)'.format((0 > d21).mean()))
-plt.subplot(1, 2, 2, title=t21)
-d21.hist(bins=50)
-plt.vlines(0, *plt.ylim());
+plot_bt_diffs(bootheights, 2, 1, subplt=1)
+plot_bt_diffs(bootheights, 5, 1, subplt=2)
 
 
-# In the case of measuring the difference in average sentence *heights* between the books, we have much more confidence that the difference in books 5 and 1 *and* between  ad 1 were not due to chance.
+# In the case of measuring the difference in average sentence *heights* between the books, we have much more confidence that the difference in books 5 and 1 *and* between 2 and 1 were not due to chance.
 
 # In[ ]:
 
 sns.violinplot(data=bootheights);
 
 
-# In[ ]:
-
-bootheights[:4]
-
-
-# In[ ]:
-
-bootdepths.pivot(index=None, columns='Book', values='Val')
-
-
-# In[ ]:
-
-bootdepths.reset_index(drop=0).set_index(['index', 'Book']).unstack()
-
-
-# In[ ]:
-
-bootdiff.idxmin()
-
-
-# In[ ]:
-
-def mod_axis(df, f, axis=0):
-    df = df.copy()
-    if not axis:
-        df.index = f(df.index)
-    else:
-        df.columns = f(df.columns)
-    return df
-
-
-# In[ ]:
-
-bootdepths.query('Book == 5').Val - bootdepths.query('Book == 1').Val
-
-
-# In[ ]:
-
-sns.violinplot(x='Book', y='Val', data=dct)
-
-
 # The average depth of a word looks higher in book 5 than in book 1, but it's hard to tell if the difference is large enough to rule out the difference's being due to chance. One way to get an idea of the difference being this great would be to shuffle the labels (see Jake VanderPlas' [Statistics for Hackers](https://speakerdeck.com/jakevdp/statistics-for-hackers) talk for an explanation).
-
-# In[ ]:
-
-sents = sent_depths.query('Book == [1, 5]')
-
-
-# In[ ]:
-
-sents.Depth
-
-
-# In[ ]:
-
-n1, n5 = sents.Book.value_counts(normalize=0).ix[[1, 5]]
-
-
-# In[ ]:
-
-n1
-
-
-# In[ ]:
-
-sdepths = np.array(sents.Depth)
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-n1
-
-
-# In[ ]:
-
-labs
-
-
-# In[ ]:
-
-get_ipython().magic('timeit nr.shuffle(sdepths)')
-
-
-# In[ ]:
-
-N = len(labs)
-p = n1 / N
-lbs = nr.binomial(1, p, N)
-
-
-# In[ ]:
-
-@memory.cache
-def sim_diff(vals, n1, aggf=np.mean, nsims=10):
-    N = len(vals)
-    p = n1 / N
-    
-    def sim_diff_(_):
-        lbs = nr.binomial(1, p, N)
-        g1 = aggf(vals[lbs == 0])
-        g2 = aggf(vals[lbs == 1])
-        return g2 - g1
-    
-    return map(sim_diff_, range(nsims))
-
-
-# In[ ]:
-
-get_ipython().magic("time difs = sim_diff(sents.Depth.values, len(sents.query('Book == 1')), aggf=np.mean, nsims=10000)")
-
 
 # In[ ]:
 
@@ -932,66 +687,16 @@ get_ipython().system('say "I am your wretched slave, master"')
 
 
 
-# In[ ]:
+# ## Epilogue: fun stats
 
-sgb.Mean[5] - sgb.Mean[1]
-
-
-# In[ ]:
-
-plt.figure(figsize=(16, 5))
-plt.hist(difs, bins=50)
-plt.vlines(sgb.Mean[5] - sgb.Mean[1], *plt.ylim())
-plt.legend(['Actual difference'], loc=2);
-
-
-# So while the actual difference of .27 looks pretty small, this is actually pretty large compared to the simulated variability.
+# #### Longest words
 
 # In[ ]:
 
-a = np.array([0, 1])
-ps = np.array([n1 / N, n5 / N])
+Series([tok.string.strip() for bk in bktksall.values() for tok in bk if len(tok) > 20]).value_counts(normalize=0)
 
 
-# In[ ]:
-
-get_ipython().magic('timeit nr.choice(a, size=N, p=ps)')
-
-
-# In[ ]:
-
-sents
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-maxdepth[:3]
-
-
-# In[ ]:
-
-sns.violinplot('Book', 'Depth', data=sent_depths)
-
-
-# In[ ]:
-
-sns.violinplot('Book', 'Depth', data=maxdepth)
-
-
-# In[ ]:
-
-sent_depths.ix[sent_depths.Depth.idxmax()]
-
-
-# In[ ]:
-
-Here is the complexity of the 
-
+# #### Tallest sentence in the series
 
 # In[ ]:
 
@@ -1001,627 +706,13 @@ print(sent)
 show_graph(build_graph(sent))
 
 
-# In[ ]:
-
-sent_depths[:4]
-
-
-# In[ ]:
-
-sent1 = sent_depth_bk(1)
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-sent1.Depth.mean()
-
-
-# #Benchmark Joblib
-
-# In[ ]:
-
-import time
-
-def timer(f):
-    @wraps(f)
-    def f2(*a, **kw):
-        st = time.time()
-        ret = f(*a, **kw)
-        return time.time() - st, ret
-    return f2
-
-def run_timed(n_jobs=None, sims=[]):
-    return [timer(get_gen_prob_text)(nsims=nsims, n_jobs=n_jobs, usecache=False)[0] for nsims in sims]
-
-simtrials = [10, 20, 100, 300, 1000, 2000, 5000, 8000, 10000, 15000, 20000]
-
-
-# In[ ]:
-
-def benchmark(fn='cache/benchmarks.csv'):
-    try:
-        return pd.read_csv(fn, index_col =0).rename(columns=int)
-    except IOError:
-        print('No file {}, running sims'.format(fn))
-
-    nj0 = run_timed(n_jobs=0, sims=simtrials)
-    nj2 = run_timed(n_jobs=2, sims=simtrials)
-    njn1 = run_timed(n_jobs=-1, sims=simtrials)
-    return DataFrame(OrderedDict([(0, nj0), (2, nj2), (-1, njn1)]), index=simtrials)
-
-
-# In[ ]:
-
-benchmarks.to_csv('cache/benchmarks.csv')
-
-
-# In[ ]:
-
-benchmarks2 = benchmark()
-benchmarks2
-
-
-# In[ ]:
-
-pd.util.testing.assert_frame_equal(benchmarks, benchmarks2)
-
-
-# In[ ]:
-
-benchmarks2.plot(style='-o')
-
-
-# In[ ]:
-
-mins = (benchmarks2 // 60 + (benchmarks2 % 60) * .01).round(2)
-mins
-
-
-# In[ ]:
-
-get_ipython().system('say done')
-
-
-# In[ ]:
-
-DataFrame(ufreq.Median).assign(Word_count=lambda x: wc)
-
-
-# In[ ]:
-
-for k, gdf in uprob_books.groupby('Book'):
-    break
-
-
-# In[ ]:
-
-nsamp = 1000
-nr.seed(nsamp)
-pd.np.random.seed(nsamp)
-gdf.Val.sample(nsamp, replace=nsamp, random_state=1).median()
-
-
-# In[ ]:
-
-def bootstrap_wd_prob(probs: Series, nsims=100, nsamp=1000):
-    meds = Series([np.median(nr.choice(probs, size=nsamp, replace=True)) for _ in range(nsims)])
-    return meds
-
-
-# In[ ]:
-
-def bootstrap_wd_prob_slow(probs: Series, nsims=100, nsamp=1000):
-    meds = Series([probs.sample(nsims, replace=True, random_state=None).median() for _ in range(nsamp)])
-    return meds
-
-
-# In[ ]:
-
-get_ipython().magic('time meds = bootstrap_wd_prob(gdf.Val)')
-
-
-# In[ ]:
-
-uprob_med_plot = uprob_books.assign(Book=lambda x: x.Book - 1).groupby('Book').Val.median()
-del uprob_med_plot
-
-
-# In[ ]:
-
-len(meds), len(meds2)
-
-
-# In[ ]:
-
-prob_books.groupby('Book').size()
-
-
-# In[ ]:
-
-simfunc = booker(partial(bootstrap_wd_prob, nsims=1000, nsamp=1000))
-sims = pd.concat([simfunc(gdf.Val, bk) for bk, gdf in uprob_books.groupby('Book')]).reset_index(drop=1)
-
-
-# In[ ]:
-
-simfunc = booker(partial(bootstrap_wd_prob, nsims=1000, nsamp=2000))
-sims2k = pd.concat([simfunc(gdf.Val, bk) for bk, gdf in uprob_books.groupby('Book')]).reset_index(drop=1)
-
-
-# In[ ]:
-
-simfunc = booker(partial(bootstrap_wd_prob, nsims=1000, nsamp=10000))
-sims1k10k = pd.concat([simfunc(gdf.Val, bk) for bk, gdf in uprob_books.groupby('Book')]).reset_index(drop=1)
-
-
-# In[ ]:
-
-simfunc = booker(partial(bootstrap_wd_prob, nsims=10000, nsamp=1000))
-sims10k1k = pd.concat([simfunc(gdf.Val, bk) for bk, gdf in uprob_books.groupby('Book')]).reset_index(drop=1)
-
-
-# In[ ]:
-
-plt.figure(figsize=(16, 10))
-plt.title('1000 sims, 10000 samps')
-sns.violinplot(x='Book', y='Val', data=sims10k1k);
-
-
-# In[ ]:
-
-plt.figure(figsize=(16, 10))
-plt.title('1000 sims, 10000 samps')
-sns.violinplot(x='Book', y='Val', data=sims2k);
-
-
-# In[ ]:
-
-uprob_books.groupby('Book').Val.median()
-
-
-# In[ ]:
-
-plt.figure(figsize=(16, 10))
-plt.title('1000 sims, 1000 samps')
-sns.violinplot(x='Book', y='Val', data=sims);
-plt.xlim(-.5, 6.5);
-
-
-# In[ ]:
-
-plt.figure(figsize=(16, 10))
-plt.title('200 sims, 1000 samps')
-sns.violinplot(x='Book', y='Val', data=sims2);
-
-
-# In[ ]:
-
-plt.figure(figsize=(16, 10))
-plt.title('100 sims, 1000 samps')
-sns.violinplot(x='Book', y='Val', data=sims);
-
-
-# In[ ]:
-
-sims
-
-
-# In[ ]:
-
-meds.hist(alpha=.5)
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-nsims = 100
-
-
-# In[ ]:
-
-meds = Series([gdf.Val.sample(nsims, replace=nsamp, random_state=None).median() for _ in range(nsamp)])
-
-
-# In[ ]:
-
-gdf[:2]
-
-
-# In[ ]:
-
-len(gdf)
-
-
-# In[ ]:
-
-uprob_books[:2]
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-def get_diff(p1, p2, justdiff=False):
-    pct1 = np.percentile(p1, 5)
-    pct2 = np.percentile(p2, 5)
-    if justdiff:
-        return pct2 - pct1
-    return pct1, pct2, pct2 - pct1
-
-print('Actual 95%-tile rarest words: Book 1: {:.2f}, Book 2: {:.2f}, Diff: {:.4f}'.format(*get_diff(probs1, probs2)))
-
-
-# In[ ]:
-
-all_sims = []
-
-
-# In[ ]:
-
-def simulate_pctile_diff(probs12, probs1, nsim=200):
-    probs12 = np.array(probs12)
-    N = len(probs12)
-    l1 = len(probs1)
-    l2 = N - l1
-    p = l1 / N
-    nr.seed(0)
-    
-    def shuffle_groups3():
-        g1 = nr.binomial(1, p , N)
-        p1 = probs12[g1 == 1]
-        p2 = probs12[g1 == 0]
-        return get_diff(p1, p2)
-    
-    for _ in range(nsim):
-        all_sims.append(shuffle_groups3())
-#     return Series([shuffle_groups3() for _ in range(nsim)])
-
-
-# In[ ]:
-
-get_ipython().magic('time simulate_pctile_diff(probs12, probs1, nsim=20000)')
-
-
-# In[ ]:
-
-filt = lambda x: ((x > -18.5) & (x < -18))
-
-
-# In[ ]:
-
-_prob = DataFrame([(tok.orth_, tok.prob) for tok in bktks[2] if filt(tok.prob)], columns=['Word', 'Prob'])
-_prob.Prob = _prob.Prob.round(3)
-_prob[filt(_prob.Prob)]
-_prob.query('Prob == [-18.317, -18.257]')
-
-
-# In[ ]:
-
-s2[filt(s2)].value_counts(normalize=0)
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-all_sims
-
-
-# In[ ]:
-
-sall_sims = Series(all_sims)
-(sall_sims < get_diff(probs1, probs2)[2]).mean()
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-sall_sims.hist(bins=100, normed=1)
-
-
-# In[ ]:
-
-get_ipython().magic('time sims1 = simulate_pctile_diff(probs12, probs1, nsim=60000)')
-
-
-# In[ ]:
-
-get_ipython().magic('time sims = simulate_pctile_diff(probs12, probs1, nsim=200)')
-
-
-# In[ ]:
-
-sims2
-
-
-# In[ ]:
-
-get_ipython().magic('time sims2 = simulate_pctile_diff(probs12, probs1, nsim=2000)')
-
-
-# In[ ]:
-
-sims2.hist(bins=50, normed=1)
-sims1.hist(bins=50, normed=1)
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-nr.ber
-
-
-# In[ ]:
-
-l1, l2
-
-
-# In[ ]:
-
-nr.shuffle()
-
-
-# In[ ]:
-
-prob_books[:3]
-
-
-# In[ ]:
-
-probs(bktks[2])
-
-
-# In[ ]:
-
-v = prob_books.query('Val < -15.2 & Val > -16 & Book == 2').Val
-v.value_counts(normalize=0)
-
-
-# In[ ]:
-
-plt.figure(figsize=(16, 10))
-pt = sns.boxplot
-pt = sns.violinplot
-pp = prob_books.query('Val < -14')
-pt(x='Book', y='Val', data=pp)
-
-
-# In[ ]:
-
-plt.figure(figsize=(16, 10))
-
-for k, gdf in prob_books.groupby('Book'):
-    gdf.query('Val < -8').Val.hist(bins=200, alpha=.2, normed=True)
-    
-    if k > 6:
-        break
-        
-plt.legend(range(1, 6))
-
-
-# In[ ]:
-
-newix = [range(length) for bk, length in prob_books.Book.value_counts(normalize=0).sort_index().items()]
-pb2 = prob_books.copy()
-pb2['Ix2'] = np.concatenate(newix)
-
-
-# In[ ]:
-
-pb2.pivot(index='Ix2', columns='Book', values='Val')
-
-
-# In[ ]:
-
-prob_books[:5]
-
-
-# In[ ]:
-
-prob_books.unstack()
-
-
-# In[ ]:
-
-def plot_cumsum(s, **kw):
-    cmsm = (s.sort_values(ascending=True)
-            .reset_index().reset_index()
-            .set_index('Val', drop=False)['level_0'].cumsum())
-    cmsm /= cmsm.max()
-    cmsm.plot()
-
-
-# In[ ]:
-
-gdf.Val.sort_values(ascending=True).describe()
-
-
-# In[ ]:
-
-plt.figure(figsize=(16, 10))  # 196000
-g = sns.FacetGrid(prob_books[:].query('Val < -14'), row="Book", aspect=8, size=2)
-g.map(plot_cumsum, 'Val'); None
-
-
-# In[ ]:
-
-plt.figure(figsize=(16, 10))  # 196000
-g = sns.FacetGrid(prob_books[:].query('Val < -8'), row="Book", aspect=8, size=2)
-g.map(plt.hist, 'Val', normed=True, bins=200); None
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-prob_books.Val.kurtosis()
-
-
-# In[ ]:
-
-
-for k, gdf in prob_books.groupby('Book'):
-    gdf.query('Val < -8').Val.hist(bins=200, alpha=.2, normed=True)
-    
-    if k > 6:
-        break
-        
-plt.legend(range(1, 6))
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-# pbs = probs(tokens)
-pbs = prob_books(bktks)
-
-
-# In[ ]:
-
-map(z.comp(str.strip, str), bktks[3])
-
-
-# In[ ]:
-
-get_words = listify(z.map(z.comp(str.strip, str)))
-
-
-# In[ ]:
-
-_tks = bktks[2]
-pbdf = (DataFrame(zip(probs(_tks), get_words(_tks)))
-        .sort_values(0, ascending=False)
-        .rename(columns={0: 'Prob', 1: 'Word'})
-       .assign(Prob=lambda x: x.Prob.round(3)))
-
-
-# In[ ]:
-
-# pbdf.query('Prob == -15.516')  # .Word.value_counts(normalize=0)
-pbdf.query('Prob == -10.963').Word.value_counts(normalize=0)
-
-
-# In[ ]:
-
-pbdf.query('Prob < -8 & Prob > -16').Prob.value_counts(normalize=0)
-
-
-# In[ ]:
-
-pbdf.query('Prob < -15.2 & Prob > -16').Prob.value_counts(normalize=0)
-
-
-# In[ ]:
-
-get_ipython().system('open /tmp/x.csv')
-
-
-# In[ ]:
-
-import numpy.random as nr
-import pandas as pd
-nr.seed(10)
-a = nr.randint(0, 20, (2, 3))
-df = pd.DataFrame(a)
-df
-
-
-# In[ ]:
-
-df.index.name = 'A0'
-df.columns.name = 'A1'
-
-
-# In[ ]:
-
-get_ipython().magic('pinfo df.rename')
-
-
-# In[ ]:
-
-This count is only a 
-
-
-# In[ ]:
-
-for tok in tokens:
-    break
-
-
-# In[ ]:
-
-tok.prob
-
-
-# In[ ]:
-
-
-gdf.Val.value_counts(normalize=1)[:k]
-
-
-# In[ ]:
-
-uncwds.groupby(['Book', 'Val']).size()
-
-
-# In[ ]:
-
-uncwds.Book.value_counts(normalize=0)
-
-
-# In[ ]:
-
-uncwds[:5]
-
-
-# In[ ]:
-
-1
-
+# #### Longest sentences
+# These seem to show some parsing issues, where a sequence of quick dialogue or lyrics are interpreted as a single sentence
 
 # In[ ]:
 
-reg_words
+for s in [sent for _, bk in sorted(bktksall.items())[:5] for sent in bk.sents if spanlen(sent) > 200]:
+    print(s, end='\n=======\n')
 
 
 # In[ ]:
@@ -1644,12 +735,6 @@ DataFrame(list(z.partition(R, vcs.index[:R*20])))
 
 # In[ ]:
 
-# Longest words
-Series([tok.string.strip() for bk in bktks.values() for tok in bk if len(tok) > 20]).value_counts(normalize=0)
-
-
-# In[ ]:
-
 sent_lens = pd.concat([sent_lens(v, i) for i, v in bktks.items()])
 
 
@@ -1661,8 +746,7 @@ Series().value_counts(normalize=0)
 
 # In[ ]:
 
-for s in [sent for bk in bktks.values() for sent in bk.sents if spanlen(sent) > 200]:
-    print(s, end='\n=======\n')
+
 
 
 # In[ ]:
@@ -1698,115 +782,7 @@ sent_lens.groupby('Book')[0].median()
 
 # In[ ]:
 
-
-
-
-# In[ ]:
-
-sent_lens
-
-
-# In[ ]:
-
-z.valmap()
-
-
-# In[ ]:
-
-def 
-
-
-# In[ ]:
-
-DataFrame(z.valmap(sent_lens, bktks))
-
-
-# In[ ]:
-
-bktks[1]
-
-
-# In[ ]:
-
-sent_lens(tks)
-
-
-# In[ ]:
-
-span.end - span.start
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-len(wd)
-
-
-# In[ ]:
-
-for wd in list(span):
-    wd
-
-
-# In[ ]:
-
-for span in tokens.sents:
-    break
-
-
-# In[ ]:
-
-span.text_with_ws
-
-
-# In[ ]:
-
-tokens.
-
-
-# In[ ]:
-
-len(list(tokens.sents))
-
-
-# In[ ]:
-
-span.end
-
-
-# In[ ]:
-
-[tokens[i] for i in range(span.start, span.end)]
-
-
-# In[ ]:
-
-span.start
-
-
-# In[ ]:
-
-tok
-
-
-# In[ ]:
-
-tok.ent_iob
-
-
-# In[ ]:
-
 people = Series(ent.string.rstrip() for ent in tokens.ents if ent.label_ == 'PERSON')
-
-
-# In[ ]:
-
-pn = people.value_counts(normalize=0)
-pn
 
 
 # In[ ]:
