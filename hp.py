@@ -8,35 +8,7 @@ get_ipython().run_cell_magic('javascript', '', "IPython.keyboard_manager.command
 
 # In[ ]:
 
-from py3k_fix import *
-
-from collections import namedtuple, Counter, defaultdict, OrderedDict
-from functools import wraps, partial
-from glob import glob
-from itertools import count
-import itertools as it
-import operator as op
-from operator import itemgetter as itg, attrgetter as prop, methodcaller as mc
-from os.path import join
-import re
-import sys
-from tempfile import mkdtemp
-import warnings; warnings.filterwarnings("ignore")
-
-
-from joblib import Parallel, delayed, Memory
-import numpy as np
-import numpy.random as nr
-import matplotlib.pyplot as plt
-from pandas import DataFrame, Series
-import pandas as pd
-from scipy import stats
-import seaborn as sns
-import toolz.curried as z
-
-from IPython.display import Image
-
-p = print
+from project_imports import *
 pd.options.display.notebook_repr_html = False
 pd.options.display.width = 120
 get_ipython().magic('matplotlib inline')
@@ -45,14 +17,10 @@ cachedir = 'cache/' # mkdtemp()
 memory = Memory(cachedir=cachedir, verbose=0)
 
 
-# pat = re.compile(r'.+? HP (\d+).+')
-# for fn in glob('src/orig/*.rtf'):
-#     print(fn)
-#     [i] = pat.findall(fn)
-#     rtfdst = join('src', 'rtf', 'hp{}.rtf'.format(i))
-#     txtdst = join('src', 'txt', 'hp{}.txt'.format(i))
-#     !cp "$fn" "$rtfdst"
-#     !unoconv --format=txt --output=$txtdst $rtfdst
+# In[ ]:
+
+import utils as ut; reload(ut);
+
 
 #     with open("src/txt/hp1.txt",'rb') as f:
 #         txt = f.read().decode("utf-8-sig")
@@ -61,11 +29,6 @@ memory = Memory(cachedir=cachedir, verbose=0)
 
 # # Load, clean and parse text
 # See `utils.py` for cleaning and parsing details.
-
-# In[ ]:
-
-import utils as ut; reload(ut);
-
 
 # In[ ]:
 
@@ -87,7 +50,7 @@ get_ipython().magic('time nlp = English()')
 # In[ ]:
 
 # bktks = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bks.txts.items()}
-bktksall = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bksall.txts.items()}
+get_ipython().magic('time bktksall = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bksall.txts.items()}')
 
 
 # I'll be writing a bunch of functions that take a list of tokens and returns a list of processed strings, numbers, etc. The following higher order functions are to facilitate applying these `[Token] -> [a]` functions to the entire Harry Potter series, returning a dataframe that keeps track of which book the processed value in a given row came from.
@@ -131,27 +94,33 @@ over_books(fst_2_nouns)
 
 
 # # Search for increasing complexity
-# ## Average word and sentence length
+# ## 1. Average word and sentence length
 # 
 # A first simple search would be to see if the average length of the words or sentences increases throughout the series.
 
 # In[ ]:
 
-sent_lens = booker(lambda parsed: [spanlen(sent) for sent in parsed.sents])
-wd_lens = booker(lambda parsed: [len(tok) for tok in parsed if len(tok) > 1])
 spanlen = lambda span: len([wd for wd in span if len(wd) > 1])
+sent_lensf = lambda parsed: [spanlen(sent) for sent in parsed.sents]
+wd_lensf = lambda parsed: [len(tok) for tok in parsed if len(tok) > 1]
+
+
+# In[ ]:
+
+wd_lensb = over_books(wd_lensf)
+sent_lensb = over_books(sent_lensf)
 
 
 # In[ ]:
 
 def wd_sent_lens():
     def agg_lens(lns):
-        return (tobooks(lns, bks=bktksall)
+        return (lns
               .groupby('Book')['Val'].agg(['mean', 'median', 'std'])
               .rename(columns=str.capitalize))
 
-    wd_len = agg_lens(wd_lens)
-    sent_len = agg_lens(sent_lens)
+    wd_len = agg_lens(wd_lensb)
+    sent_len = agg_lens(sent_lensb)
     
     lens = {'Sentence_length': sent_len, 'Word_length': wd_len}
     return pd.concat(lens.values(), axis=1, keys=lens.keys())
@@ -169,7 +138,92 @@ plt.subplot(1, 2, 2)
 wsls.Sentence_length['Mean'].plot(title='Average sentence length');
 
 
-# There does appear to be an increasing trend for both average word and sentence length difference between the books, though the scale of the difference is miniscule in light of the standard deviations.
+# There does appear to be an increasing trend for both average word and sentence length difference between the books, though the scale of the difference looks miniscule in light of the standard deviations within each book.
+# 
+# One way to gauge the likelihood that the average word length difference between, say, books 1 and 2 is due to chance would be to   shuffle the labels a bunch of times, and each time calculate the difference in average word length. (See Jake VanderPlas' [Statistics for Hackers](https://speakerdeck.com/jakevdp/statistics-for-hackers) talk and [Tim Hesterberg's article](http://arxiv.org/abs/1411.5279) covering permutation tests for an explanation).
+
+# In[ ]:
+
+def sim_diff_(xs, N, aggfunc=np.mean, p=.5):
+    labs = nr.binomial(1, p, N)  # cheap shuffling approximation
+    g1 = aggfunc(xs[labs == 1])
+    g2 = aggfunc(xs[labs == 0])
+    return g2 - g1
+
+
+@memory.cache
+def sim_diff(xs, n1, aggfunc=np.mean, nsims=10, n_jobs=1):
+    N = len(xs)
+    p = n1 / N
+    xs = np.array(xs)
+    f = delayed(sim_diff_)
+    gen = (f(xs, N, aggfunc=aggfunc, p=p) for _ in range(nsims))
+    return Series(Parallel(n_jobs=n_jobs)(gen))
+
+
+def plot_perm_diffs(samps, actual=None, bka=2, bkb=1, subplt=1, xlabel=None):
+    t = ('Simulated and actual difference between books {bka} and {bkb}'
+         '\nPermutation pvalue: {pv:.3%}; N={N:,.0f}'
+          .format(bka=bka, bkb=bkb, pv=ut.pvalue(actual, samps), N=len(samps)))
+    plt.subplot(1, 2, subplt, title=t)
+    samps.hist(bins=50)
+    plt.vlines(actual, *plt.ylim())
+    plt.legend(['Actual\ndifference'], loc=2)
+    if xlabel is not None:
+        plt.xlabel(xlabel)
+
+
+# In[ ]:
+
+wd_lensb23 = wd_lensb.query('Book == [2, 3]')
+get_ipython().magic('time perm_wd_23 = sim_diff(wd_lensb23.Val, wd_lensb23.Book.value_counts(normalize=0)[2], nsims=10000, n_jobs=-1)')
+
+
+# In[ ]:
+
+wd_lensb12 = wd_lensb.query('Book == [1, 2]')
+get_ipython().magic('time perm_wd_12 = sim_diff(wd_lensb12.Val, wd_lensb12.Book.value_counts(normalize=0)[1], nsims=10000, n_jobs=-1)')
+
+
+# As the following histogram of simulated word length differences shows, the difference is quite significant in the word lengths, despite what the large standard deviations first led me to believe. The trendline above shows an pronounced jump between books 1 & 2 which is reflected in the smallest possible p-value, but the permutation sampling shows that the jump between 2 and 3 is also significant.
+
+# In[ ]:
+
+plt.figure(figsize=(16, 5))
+dw12 = wsls.Word_length.Mean[2] - wsls.Word_length.Mean[1]
+plot_perm_diffs(perm_wd_12, actual=dw12, bka=1, bkb=2, subplt=1, xlabel='Word length difference')
+
+dw23 = wsls.Word_length.Mean[3] - wsls.Word_length.Mean[2]
+plot_perm_diffs(perm_wd_23, actual=dw23, bka=2, bkb=3, subplt=2, xlabel='Word length difference')
+
+
+# The earlier trendline for sentence lengths is more ambiguous. While the word length immediately jumps following *The Sorcerer's Stone* and continues to increase in all but 2 cases, the sentence length bounces around a lot more. But there does seem to be a significant difference between the first four and the last three, which we can also test for.
+
+# In[ ]:
+
+sent_lens_fst_snd = sent_lensb.copy()
+sent_lens_fst_snd['Part'] = '1-4'
+sent_lens_fst_snd.loc[sent_lensb.Book > 4, 'Part'] = '5-7'
+μ_ab = sent_lens_fst_snd.groupby('Part').Val.mean()
+
+n1 = sent_lens_fst_snd.Part.value_counts(normalize=0)['1-4']
+get_ipython().magic('time perm_sent_ab = sim_diff(sent_lens_fst_snd.Val, n1, nsims=10000, n_jobs=-1)')
+del n1
+sent_lens12 = sent_lensb.query('Book == [1, 2]')
+get_ipython().magic('time perm_sent_12 = sim_diff(sent_lens12.Val, sent_lens12.Book.value_counts(normalize=0)[1], nsims=100000, n_jobs=-1)')
+
+
+# In[ ]:
+
+plt.figure(figsize=(16, 5))
+dsab = μ_ab.ix['5-7'] - μ_ab.ix['1-4']
+plot_perm_diffs(perm_sent_ab, actual=dsab, bka='5-7', bkb='1-4', subplt=1, xlabel='Sentence length difference')
+
+ds12 = wsls.Sentence_length.Mean[2] - wsls.Sentence_length.Mean[1]
+plot_perm_diffs(perm_sent_12, actual=ds12, bka=1, bkb=2, subplt=2, xlabel='Sentence length difference')
+
+
+# Here we see that the difference between books 1 & 2 is very significant, though not as much as the difference between the first and second parts (as defined by 1-4 and 5-7). Thus we can, with reasonable confidence, reject the notion that the increase in word length and sentence length through the series is a statistical artifact that ocurred by chance. 
 
 # ## Word complexity by frequency
 # 
@@ -658,7 +712,12 @@ sgbs
 
 # In[ ]:
 
-get_ipython().magic("time bootheights = bootstrap_depths(maxdepth, by='Book', col='Depth', nsims=1000, n_jobs=-1, size=1000)")
+get_ipython().magic("time bootheights = bootstrap_depths(maxdepth, by='Book', col='Depth', nsims=100000, n_jobs=-1, size=1000)")
+
+
+# In[ ]:
+
+get_ipython().system('say done')
 
 
 # In[ ]:
@@ -675,16 +734,11 @@ plot_bt_diffs(bootheights, 5, 1, subplt=2)
 sns.violinplot(data=bootheights);
 
 
-# The average depth of a word looks higher in book 5 than in book 1, but it's hard to tell if the difference is large enough to rule out the difference's being due to chance. One way to get an idea of the difference being this great would be to shuffle the labels (see Jake VanderPlas' [Statistics for Hackers](https://speakerdeck.com/jakevdp/statistics-for-hackers) talk for an explanation).
+# The average depth of a word looks higher in book 5 than in book 1, but it's hard to tell if the difference is large enough to rule out the difference's being due to chance. 
 
 # In[ ]:
 
 get_ipython().system('say "I am your wretched slave, master"')
-
-
-# In[ ]:
-
-
 
 
 # ## Epilogue: fun stats
@@ -693,7 +747,16 @@ get_ipython().system('say "I am your wretched slave, master"')
 
 # In[ ]:
 
-Series([tok.string.strip() for bk in bktksall.values() for tok in bk if len(tok) > 20]).value_counts(normalize=0)
+Series([tok.orth_ for bk in bktksall.values() for tok in bk if len(tok.orth_) > 20]).value_counts(normalize=0)
+
+
+# #### Longest unhyphenated words
+
+# In[ ]:
+
+Series([tok.orth_ for bk in bktksall.values()
+        for tok in bk if len(tok.orth_) > 15
+        and '-' not in tok.orth_]).value_counts(normalize=0)
 
 
 # #### Tallest sentence in the series
@@ -708,6 +771,16 @@ show_graph(build_graph(sent))
 
 # #### Longest sentences
 # These seem to show some parsing issues, where a sequence of quick dialogue or lyrics are interpreted as a single sentence
+
+# In[ ]:
+
+get_ipython().system('date')
+
+
+# In[ ]:
+
+get_ipython().system('date')
+
 
 # In[ ]:
 

@@ -1,10 +1,12 @@
 from collections import namedtuple, OrderedDict
 from functools import reduce
+import numpy as np
 import operator as op
 import re
 import toolz.curried as z
 
 
+# Text handling
 Chapter = namedtuple('Chapter', 'num title text')
 bookpat_re = re.compile(r'''\A(?P<title>.+)
 \n*
@@ -85,3 +87,18 @@ def mod_axis(df, f, axis=0):
     else:
         df.columns = f(df.columns)
     return df
+
+
+def pvalue(x, xs, side=4):
+    "side: 1=>low p-value, 2=>hi, 3=>min(lo,hi), 4=> min(lo,hi) * 2"
+    l = np.sum(x <= np.array(xs))
+    r = np.sum(x >= np.array(xs))
+    np1 = len(xs) + 1
+    lp = (1 + l) / np1
+    rp = (1 + r) / np1
+
+    if side == 1: return lp
+    elif side == 2: return rp
+    elif side == 3: return min(lp, rp)
+    elif side == 4: return min(lp, rp) * 2
+    else: raise ValueError('`side` arg should be ∈ 1..4')
