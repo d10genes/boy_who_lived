@@ -8,7 +8,6 @@ from operator import itemgetter as itg, attrgetter as prop, methodcaller as mc
 from os.path import join
 import re
 import sys
-from tempfile import mkdtemp
 import warnings; warnings.filterwarnings("ignore")
 
 
@@ -40,3 +39,6 @@ map = listify(builtins.map)
 range = listify(builtins.range)
 filter = listify(builtins.filter)
 zip = listify(builtins.zip)
+
+pd.options.display.notebook_repr_html = False
+pd.options.display.width = 120

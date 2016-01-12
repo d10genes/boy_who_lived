@@ -1,4 +1,4 @@
-from collections import namedtuple, OrderedDict
+from collections import namedtuple, OrderedDict, defaultdict
 from functools import reduce
 import numpy as np
 import operator as op
@@ -102,3 +102,26 @@ def pvalue(x, xs, side=4):
     elif side == 3: return min(lp, rp)
     elif side == 4: return min(lp, rp) * 2
     else: raise ValueError('`side` arg should be ∈ 1..4')
+
+
+# Graph
+def dedupe_wrd_repr(s):
+    d = {}
+    dfd = defaultdict(int)
+    for tok in s:
+        dfd[tok.orth_] += 1
+        n = dfd[tok.orth_]
+        #print(tok.i, tok, n)
+        if n > 1:
+            d['{}[{}]'.format(tok.orth_, n)] = tok.i
+        else:
+            d[tok.orth_] = tok.i
+    return {v: k for k, v in d.items()}
+
+def add_edge(src, dst, G, reprdct=None):
+    """Since this is a tree, append an underscore for duplicate
+    destination nodes"""
+    G.add_edge(reprdct[src.i], reprdct[dst.i])
+
+def add_int_edge(src, dst, G, **_):
+    G.add_edge(src.i, dst.i)

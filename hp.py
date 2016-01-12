@@ -1,34 +1,31 @@
 
 # coding: utf-8
 
+# I finally started reading a series of books over break featuring a wizard named Harry Potter. As I progressed through the series, I noticed the page count getting longer and the books getting heavier. While recounting this to a friend who had also read the series, she noted that she felt the writing style of the books seemed to grow as much as the thickness. While the earlier books (particularly the first) seemed to be written to a younger audience with simpler sentences and descriptions, she said, this seemed to get more complex in the later books as Harry also comes of age. I have heard this sentiment confirmed with other readers, and began to wonder whether it would be possible to quantify writing complexity and measure whether there is a significant difference as the series progress. This [notebook](somewhere) is my attempt to quantify it.  
+# 
+# To quantify the complexity, I look at the following metrics: average word length and sentence length, word frequency within the text, word frequency based on external sources, and the average syntactic complexity of sentences.
+# 
+# The testing to determine the difference between books is largely inspired by seeing the recent presentation ["Statistics for Hackers"](https://speakerdeck.com/jakevdp/statistics-for-hackers) by Jake VanderPlas, where he introduces simulations, label shuffling, bootstrapping and cross validation as intuitive alternatives to classical statistical approaches. The two methods that I mainly use here are permutation testing ('label shuffling') and the bootstrap. I also used this as a chance to try out the [spaCy](https://spacy.io) library, which bills itself as a "library for industrial-strength natural language processing in Python and Cython."
+# 
+# From here on out, the words will be much sparser than the code.
+
+# # Import, load/clean/parse text
+# See `utils.py` for cleaning and parsing details.
+
 # In[ ]:
 
-get_ipython().run_cell_magic('javascript', '', "IPython.keyboard_manager.command_shortcuts.add_shortcut('Ctrl-k','ipython.move-selected-cell-up')\nIPython.keyboard_manager.command_shortcuts.add_shortcut('Ctrl-j','ipython.move-selected-cell-down')\nIPython.keyboard_manager.command_shortcuts.add_shortcut('Shift-m','ipython.merge-selected-cell-with-cell-after')")
+get_ipython().run_cell_magic('javascript', '', "var csc = IPython.keyboard_manager.command_shortcuts\ncsc.add_shortcut('Ctrl-k','ipython.move-selected-cell-up')\ncsc.add_shortcut('Ctrl-j','ipython.move-selected-cell-down')\ncsc.add_shortcut('Shift-m','ipython.merge-selected-cell-with-cell-after')")
 
 
 # In[ ]:
 
 from project_imports import *
-pd.options.display.notebook_repr_html = False
-pd.options.display.width = 120
+import utils as ut; reload(ut);
 get_ipython().magic('matplotlib inline')
 
-cachedir = 'cache/' # mkdtemp()
+cachedir = 'cache/'
 memory = Memory(cachedir=cachedir, verbose=0)
 
-
-# In[ ]:
-
-import utils as ut; reload(ut);
-
-
-#     with open("src/txt/hp1.txt",'rb') as f:
-#         txt = f.read().decode("utf-8-sig")
-#     #     doc = Rtf15Reader.read(f)
-#     t = txt[:60000]
-
-# # Load, clean and parse text
-# See `utils.py` for cleaning and parsing details.
 
 # In[ ]:
 
@@ -38,7 +35,7 @@ with open('src/stops.txt', 'r') as f:
     stops = set(l for l in f.read().splitlines() if l and not l.startswith('#'))
 
 
-# I recently came across the [spaCy](https://spacy.io) library, which bills itself as a "library for industrial-strength natural language processing in Python and Cython," and this seemed like a good opportunity to explore its capabilities. The starting point is a parsing function that parses, tags and detects entities all in one go.
+# The starting point for spaCy is a parsing function that parses, tags and detects entities all in one go.
 
 # In[ ]:
 
@@ -94,7 +91,7 @@ over_books(fst_2_nouns)
 
 
 # # Search for increasing complexity
-# ## 1. Average word and sentence length
+# ## Average word and sentence length
 # 
 # A first simple search would be to see if the average length of the words or sentences increases throughout the series.
 
@@ -227,7 +224,7 @@ plot_perm_diffs(perm_sent_12, actual=ds12, bka=1, bkb=2, subplt=2, xlabel='Sente
 
 # ## Word complexity by frequency
 # 
-# The lack of discernible difference in word/sentence length could be because even complex language is still largely composed of shorter, commoner words, highlighted by rarer, more complex words. A way to test this could be to somehow get a measure of the frequency of just the rarer words by counting, for example,  what percentage of the words only appear once.
+# In addition to measuring the increase in average word/sentence length, it could be more insightful to measure the frequency of rarer words. My hypothesis was that even complex language is still largely composed of shorter, commoner words, highlighted by rarer, more complex words. A way to test this could be to somehow get a measure of the frequency of just the rarer words by counting, for example, what percentage of the words only appear once.
 
 # In[ ]:
 
@@ -267,9 +264,9 @@ wdfreq.apply(mc('cumsum')).ix[10].plot()
 plt.ylabel('% of words in each book\n that appear 10 times or less');
 
 
-# ## Word complexity by frequency in English language usage
+# ## Word complexity by English language frequency
 
-# The frequency counting above, however, only counts words that are rare within the context of this series. Fortunateky, spaCy provides a log-probability score for each parsed word, based on its frequency in external corpora. These will be negative numbers such that a lower score indicates that a word is less common in English usage outside of Harry Potter. "Low probability," "low likelihood" and "less common" are terms I'll use to describe words with low log-probability scores.
+# The frequency counting above, however, only counts words that are rare within the context of this series. Fortunately, spaCy provides a log-probability score for each parsed word, based on its frequency in external corpora. These will be negative numbers such that a lower score indicates that a word is less common in English usage outside of Harry Potter. "Low probability," "low likelihood" and "less common" are terms I'll use to describe words with low log-probability scores.
 
 # In[ ]:
 
@@ -300,7 +297,7 @@ def show_freq(bookstats):
 show_freq(prob_books)
 
 
-# The most drastic difference is in the frequency of the 95th percentile between first and second books. The graph shows that a typical word in the 95th percentile has a log probability of -13.3 in the first book and -13.8 in the second. The drop doesn't look that drastic, and there doesn't seem to be a discernable overall trend, either.
+# The most drastic difference is in the frequency of the 95th percentile between first and second books. The graph shows that a typical word in the 95th percentile has a log probability of -13.3 in the first book and -13.8 in the second (this is about the difference between the words *frogs* and *lopsided*). The drop doesn't look that drastic, and there doesn't seem to be a discernable overall trend, either.
 # 
 # Out of curiosity, it could be helpful to dig into what the probabilities look like for the first couple hundred least likely words.
 
@@ -323,7 +320,7 @@ def show_unc_word_trend():
     
 plt.figure(figsize=(8, 5))
 show_unc_word_trend()
-plt.hlines([-18.25, -18.32], *plt.xlim(), linestyles='dashdot')
+plt.hlines([-18.25, -18.32], *plt.xlim(), linestyles='dashdot');
 
 
 # Starting from the least common words, it looks like the part of the reason Book 2's words are less frequent is due to a few streaks of words that have log probabilities indicated by the dashed lines. The repetition of certain uncommon words in the story line could lead us to classify some text as more complex than we should. A solution would be to run the same plots on the probabilities of *unique* words in the texts.
@@ -376,11 +373,13 @@ plot_corrcoef(x='Word_count', y='Mean', data=ufreq.assign(Word_count=wc))
 # plt.title('Corr. Coef.: {:.3f}'.format(stats.pearsonr(ufreq.Mean, wc)[0]));
 
 
-# Indeed, the relationship between typical word appears to have a quite [log] linear relationship with word count. I'm not sure what relationship is to be expected, but it looks like it would be worthwhile to try and correct for document length in determining word complexity. 
+# Indeed, the relationship between typical word probability appears to have a quite [log] linear relationship with word count. I'm not sure what relationship is to be expected, but it looks like it would be worthwhile to try and correct for document length in determining word complexity.
+# 
+# Before digging into this correction, here is what the growth pattern looks like for unique words, sampling and shuffling several times. The cumulative count of new words resembles a log curve, and the new word rate resembles an exponential decay curve (at least to my eyes).
 
 # In[ ]:
 
-def simgrowth(toks, nsims=20):
+def simgrowth(toks, nsims=20, window=200):
     def simgrowth_():
         s = set()
         l = []
@@ -389,28 +388,35 @@ def simgrowth(toks, nsims=20):
         for w in tks:
             s.add(w)
             l.append(len(s))
-        return l
+        sl = Series(l)
+        nl = sl.values
+        rate = Series(pd.rolling_mean(nl[1:] - nl[:-1], window)).dropna()
+        return sl, rate
+    
     return [simgrowth_() for _ in range(nsims)]
 
-ls = simgrowth(bktksall[1])
+ls = simgrowth(bktksall[1], nsims=10)
 
 
 # In[ ]:
 
-for l in ls:
-    plt.plot(l, alpha=.05)
+plt.figure(figsize=(16, 5))
+for l, rm in ls:
+    plt.subplot(1, 2, 1)
+    plt.title('New word')
+    plt.plot(l, alpha=.1, )
+    
+    plt.subplot(1, 2, 2)
+    plt.title('New word rate')
+    rm.plot(alpha=.1)
+    
+μ_rm = pd.concat(map(itg(1), ls), axis=1).mean(axis=1)
+μ_rm.plot(alpha=1)
 
 
-# ls5 = simgrowth(bktks[5])
-# plt.figure(figsize=(16, 10))
-# for l in ls5:
-#     plt.plot(l, alpha=.05)
-#     
-# for l in ls:
-#     plt.plot(l, alpha=.05)
-
-# ### Simulate word distributions
-# For each booklength $L$, I'll be repeatedly sampling $L$ words with replacement from the book with the largest word count, book 5, and then finding the average word probability of each sample. This should give an estimate of what the average word count should be for each book, they were all drawing from the same source, given the length of each book. 
+# ### Probability of unique words: correcting for varying word counts
+# ####Simulate word distributions
+# For each booklength $L$, I'll be repeatedly sampling $L$ words without replacement from the book with the largest word count, book 5, and then finding the average unique word probability of each sample. This should give an estimate of what the average word count should be for each book, they were all drawing from the same source, given the length of each book. 
 
 # In[ ]:
 
@@ -454,8 +460,6 @@ def sim_gen_text(worddist=5, sizebook=1, nsims=10000,
     return ret 
 
 
-# %time x = sim_gen_text(worddist=5, sizebook=5, nsims=100, aggfunc=np.mean, rep=True)
-
 # In[ ]:
 
 @memory.cache
@@ -481,15 +485,7 @@ def join_sim_act(simdf_):
 # In[ ]:
 
 get_ipython().magic('time simdf_ = get_gen_prob_text(nsims=10000, worddist=8, n_jobs=-1, rep=False)')
-
-
-# In[ ]:
-
 dboth, simdf = join_sim_act(simdf_)
-
-
-# In[ ]:
-
 bothagg = dboth.groupby(['Source', 'Book',]).mean()
 bothagg.unstack('Source')
 
@@ -505,9 +501,9 @@ sns.violinplot('Book', 'Val', data=simdf)
 plt.scatter(pbothagg.index, pbothagg.Actual, s=80, c='k', marker='x', linewidth=2);
 
 
-# Barring some subtle errors in my simulation code (which would not surprise me at all), the violin plot above says that the actual average word probability for books 2, 5, 6 and 7 are roughly what one would expect if words were drawn at random from the whole series, based solely on the length of the book. Measuring word complexity as having a low probability, this could lead one to say that the word complexity of the first book is way below average, and the word complexity if the 3rd and 4th books are somewhat below average, with 5, 6 and 7 increasingly approaching the average. This seems to be the best evidence so far of the writing complexity increasing as Harry Potter's education progresses.
+# Barring some subtle errors in my simulation code (which would not surprise me at all), the violin plot above says that the actual average word probability for books 2, 5, 6 and 7 are roughly what one would expect if words were drawn at random from the whole series, based solely on the length of the book. Measuring word complexity as having a low probability, this could lead one to say that the word complexity of the first book is way below average, as well as the 3rd and 4th to a lesser extent, with 5, 6 and 7 increasingly approaching the average. This seems to be the best evidence so far of the writing complexity increasing as Harry Potter's education progresses.
 # 
-# The trend in increasing complexity may be clearer by plotting this difference in simulated and actual average probability:
+# The trend in increasing complexity is perhaps clearer when plotting this difference in simulated and actual average probability:
 
 # In[ ]:
 
@@ -518,12 +514,7 @@ plt.subplot(1, 2, 2)
 plot_corrcoef(x='Word_count', y='Mean', data=simdf.groupby(['Book']).mean().rename(columns={'Val': 'Mean'}).assign(Word_count=wc))
 
 
-# To the right, we also see that at least the simulated values are much better estimated by a linear word count predictor (negative correlation coefficient of .985 for the simulated vs .935 for the actual averages). 
-
-# In[ ]:
-
-DataFrame(Series({k: ((v.Val < ufreq.Mean[k]).mean() * 100).round(1) for k, v in simdf.groupby('Book')})).T
-
+# To the right, we also see that at least the simulated values are much better estimated by a linear word count predictor (negative correlation coefficient of .985 for the simulated vs .935 for the actual averages plotted earlier). 
 
 # ## Sentence structure complexity
 
@@ -535,46 +526,11 @@ DataFrame(Series({k: ((v.Val < ufreq.Mean[k]).mean() * 100).round(1) for k, v in
 import pygraphviz as pgv
 
 
-# G = nx.DiGraph()
-# G.add_edge
-# ts = bktksall[1]
-# for s in ts.sents:
-#     break
-# s.root.head is s.root
-# list(s.root.children)
-# s
-# s.root.
-# child.n_lefts
-
 # In[ ]:
 
-def dedupe_wrd_repr(s):
-    d = {}
-    dfd = defaultdict(int)
-    for tok in s:
-        dfd[tok.orth_] += 1
-        n = dfd[tok.orth_]
-        #print(tok.i, tok, n)
-        if n > 1:
-            d['{}[{}]'.format(tok.orth_, n)] = tok.i
-        else:
-            d[tok.orth_] = tok.i
-    return {v: k for k, v in d.items()}
-
-def add_edge(src, dst, G, reprdct=None):
-    """Since this is a tree, append an underscore for duplicate
-    destination nodes"""
-    G.add_edge(reprdct[src.i], reprdct[dst.i])
-    
-def add_int_edge(src, dst, G, **_):
-    G.add_edge(src.i, dst.i)
-
-
-# In[ ]:
-
-def build_graph(s, add_edge=add_edge):
+def build_graph(s, add_edge=ut.add_edge):
     G = pgv.AGraph(directed=True)
-    reprdct = dedupe_wrd_repr(s)
+    reprdct = ut.dedupe_wrd_repr(s)
     
     def build_graph_(tok, i=0):
         for c in tok.children:
@@ -591,13 +547,15 @@ def show_graph(g):
 
 s = next(bktksall[1].sents)
 G = build_graph(s)
-Gi = build_graph(s, add_edge=add_int_edge)
+Gi = build_graph(s, add_edge=ut.add_int_edge)
 
 
 # In[ ]:
 
 show_graph(G)
 
+
+# The two features to compare across books that came to mind looking at this structure are the total height of the whole tree, and the depth of the nodes, averaged for each sentence. While I used permutation tests to analyze the other metrics above, here I'll run bootstrap simulations of the syntax tree depths, and average the difference between books over the simulated values, just to mix things up.
 
 # In[ ]:
 
@@ -626,8 +584,6 @@ sgb = (sent_depths.groupby(['Book']).Depth
 sgb
 
 
-# s1 = sent_depths.query('Book == 1')
-
 # In[ ]:
 
 def sim_depth(s, seed=None, size=None, aggfunc=None):
@@ -641,14 +597,6 @@ def bootstrap_depths(df, by='Book', col=None, aggfunc=np.mean,
     df = DataFrame({bknum: Parallel(n_jobs=n_jobs)(genmkr(gbs)) for bknum, gbs in df.groupby(by)[col]} )
     return df
 
-
-# In[ ]:
-
-get_ipython().magic("time bootdepths = bootstrap_depths(sent_depths, by='Book', col='Depth', nsims=10000, n_jobs=-1)")
-
-
-# In[ ]:
-
 def piv(df):
     df.columns.name = by
     return (df.unstack().reset_index(drop=0).drop('level_1', axis=1)
@@ -657,12 +605,7 @@ def piv(df):
 
 # In[ ]:
 
-# def get_bt_diff_(bka, bkb, df=bootdepths):
-#     return Series(df.query('Book == %s' % bka).Val.values
-#                   - df.query('Book == %s'  % bkb).Val.values)
-
-# def get_bt_diff(bka, bkb, df=bootdepths):
-#     return Series(df[bka] - df[bkb].Val
+get_ipython().magic("time bootdepths = bootstrap_depths(sent_depths, by='Book', col='Depth', nsims=10000, n_jobs=-1)")
 
 
 # Here are the simulated average depths of each word by book for comparison:
@@ -717,11 +660,6 @@ get_ipython().magic("time bootheights = bootstrap_depths(maxdepth, by='Book', co
 
 # In[ ]:
 
-get_ipython().system('say done')
-
-
-# In[ ]:
-
 plt.figure(figsize=(16, 5))
 plot_bt_diffs(bootheights, 2, 1, subplt=1)
 plot_bt_diffs(bootheights, 5, 1, subplt=2)
@@ -734,12 +672,7 @@ plot_bt_diffs(bootheights, 5, 1, subplt=2)
 sns.violinplot(data=bootheights);
 
 
-# The average depth of a word looks higher in book 5 than in book 1, but it's hard to tell if the difference is large enough to rule out the difference's being due to chance. 
-
-# In[ ]:
-
-get_ipython().system('say "I am your wretched slave, master"')
-
+# # Conclusion
 
 # ## Epilogue: fun stats
 
