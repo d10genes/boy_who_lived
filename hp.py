@@ -1,11 +1,13 @@
 
 # coding: utf-8
 
-# I finally started reading a series of books over break featuring a wizard named Harry Potter. As I progressed through the series, I noticed the page count getting longer and the books getting heavier. While recounting this to a friend who had also read the series, she noted that she felt the writing style of the books seemed to grow as much as the thickness. While the earlier books (particularly the first) seemed to be written to a younger audience with simpler sentences and descriptions, she said, this seemed to get more complex in the later books as Harry also comes of age. I have heard this sentiment confirmed with other readers, and began to wonder whether it would be possible to quantify writing complexity and measure whether there is a significant difference as the series progress. This [notebook](somewhere) is my attempt to quantify it.  
+# I finally started reading a series of books over break featuring a certain wizard named Harry Potter. As I progressed through the series, I noticed the page count getting longer and the books getting heavier. While recounting this to a friend who had also read the series, she noted that she felt the writing style of the books seemed to grow as much as the thickness. While the earlier books (particularly the first) seemed to be written to a younger audience with simpler sentences and descriptions, she said, this seemed to get more complex in the later books as Harry also comes of age. I have heard this sentiment confirmed with other readers, and began to wonder whether it would be possible to quantify writing complexity and measure whether there is a significant difference as the series progress. This [notebook](somewhere) is my attempt to quantify it.  
 # 
 # To quantify the complexity, I look at the following metrics: average word length and sentence length, word frequency within the text, word frequency based on external sources, and the average syntactic complexity of sentences.
 # 
 # The testing to determine the difference between books is largely inspired by seeing the recent presentation ["Statistics for Hackers"](https://speakerdeck.com/jakevdp/statistics-for-hackers) by Jake VanderPlas, where he introduces simulations, label shuffling, bootstrapping and cross validation as intuitive alternatives to classical statistical approaches. The two methods that I mainly use here are permutation testing ('label shuffling') and the bootstrap. I also used this as a chance to try out the [spaCy](https://spacy.io) library, which bills itself as a "library for industrial-strength natural language processing in Python and Cython."
+# 
+# As a fair warning to those whoe want to run this notebook for themselves, some of the simulations take a really long time to run (~2  hrs), but joblib caches the results after the first run.
 # 
 # From here on out, the words will be much sparser than the code.
 
@@ -35,18 +37,18 @@ with open('src/stops.txt', 'r') as f:
     stops = set(l for l in f.read().splitlines() if l and not l.startswith('#'))
 
 
-# The starting point for spaCy is a parsing function that parses, tags and detects entities all in one go.
+# The starting point for spaCy is a parsing function that parses, tags and detects entities all in one go. This unfortunately takes quite a bit of time to load (but is at least a [known issue](https://github.com/honnibal/spaCy/issues/219)).
 
 # In[ ]:
 
 from spacy.en import English
-from spacy.parts_of_speech import ADJ
+from spacy.parts_of_speech import ADJ, NAMES as pos_names
+
 get_ipython().magic('time nlp = English()')
 
 
 # In[ ]:
 
-# bktks = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bks.txts.items()}
 get_ipython().magic('time bktksall = {i: nlp(bktxt, tag=True, parse=True, entity=True) for i, bktxt in bksall.txts.items()}')
 
 
@@ -120,8 +122,8 @@ def wd_sent_lens():
     sent_len = agg_lens(sent_lensb)
     
     lens = {'Sentence_length': sent_len, 'Word_length': wd_len}
-    return pd.concat(lens.values(), axis=1, keys=lens.keys())
- 
+    return pd.concat(lens.values(), axis=1, keys=lens.keys()).round(2)
+
 wsls = wd_sent_lens()
 wsls
 
@@ -135,9 +137,9 @@ plt.subplot(1, 2, 2)
 wsls.Sentence_length['Mean'].plot(title='Average sentence length');
 
 
-# There does appear to be an increasing trend for both average word and sentence length difference between the books, though the scale of the difference looks miniscule in light of the standard deviations within each book.
+# There does appear to be an increasing trend for both average word and sentence length difference between the books, though the scale of the difference looks small compared to the standard deviations within each book.
 # 
-# One way to gauge the likelihood that the average word length difference between, say, books 1 and 2 is due to chance would be to   shuffle the labels a bunch of times, and each time calculate the difference in average word length. (See Jake VanderPlas' [Statistics for Hackers](https://speakerdeck.com/jakevdp/statistics-for-hackers) talk and [Tim Hesterberg's article](http://arxiv.org/abs/1411.5279) covering permutation tests for an explanation).
+# One way to gauge the likelihood that the average word length difference between, say, books 1 and 2 is due to chance would be to   shuffle the labels a bunch of times, and each time calculate the difference in average word length. (See Jake VanderPlas' [Statistics for Hackers](https://speakerdeck.com/jakevdp/statistics-for-hackers) talk and [Tim Hesterberg's article](http://arxiv.org/abs/1411.5279) covering permutation tests for an explanation). This shuffling lets us simulate the distribution for the word length differences--if we see that the actual difference in word length between books one and two fits in around the middle of this simulated distribution, then there's a good likelihood that the increase in average word length is small enough is simply due to chance. If the actual word length difference falls to the far upper edge of the distribution, we can be confident in rejecting the idea that the difference is due to chance, which many would take as sufficient evidence of an increasing complexity throughout the series.
 
 # In[ ]:
 
@@ -194,17 +196,16 @@ dw23 = wsls.Word_length.Mean[3] - wsls.Word_length.Mean[2]
 plot_perm_diffs(perm_wd_23, actual=dw23, bka=2, bkb=3, subplt=2, xlabel='Word length difference')
 
 
-# The earlier trendline for sentence lengths is more ambiguous. While the word length immediately jumps following *The Sorcerer's Stone* and continues to increase in all but 2 cases, the sentence length bounces around a lot more. But there does seem to be a significant difference between the first four and the last three, which we can also test for.
+# The earlier trendline for *sentence* lengths is more ambiguous. While the word length immediately jumps following *The Sorcerer's Stone* and continues to increase in all but 2 cases, the sentence length bounces around a lot more. But there does seem to be a significant difference between the first four and the last three, which we can also test for.
 
 # In[ ]:
 
-sent_lens_fst_snd = sent_lensb.copy()
-sent_lens_fst_snd['Part'] = '1-4'
-sent_lens_fst_snd.loc[sent_lensb.Book > 4, 'Part'] = '5-7'
-μ_ab = sent_lens_fst_snd.groupby('Part').Val.mean()
+sent_lensb['Part'] = '1-4'
+sent_lensb.loc[sent_lensb.Book > 4, 'Part'] = '5-7'
+μ_ab = sent_lensb.groupby('Part').Val.mean()
 
-n1 = sent_lens_fst_snd.Part.value_counts(normalize=0)['1-4']
-get_ipython().magic('time perm_sent_ab = sim_diff(sent_lens_fst_snd.Val, n1, nsims=10000, n_jobs=-1)')
+n1 = sent_lensb.Part.value_counts(normalize=0)['1-4']
+get_ipython().magic('time perm_sent_ab = sim_diff(sent_lensb.Val, n1, nsims=10000, n_jobs=-1)')
 del n1
 sent_lens12 = sent_lensb.query('Book == [1, 2]')
 get_ipython().magic('time perm_sent_12 = sim_diff(sent_lens12.Val, sent_lens12.Book.value_counts(normalize=0)[1], nsims=100000, n_jobs=-1)')
@@ -231,7 +232,6 @@ plot_perm_diffs(perm_sent_12, actual=ds12, bka=1, bkb=2, subplt=2, xlabel='Sente
 def reg_words(parsed):
     "Non-capitalized words > 3 chars long that aren't stopwords"
     wds = [tok.orth_ for tok in parsed]
-    #wds = [tok.string.rstrip() for tok in parsed]
     return [w for w in wds if len(w) > 3 and (w.lower() not in stops) and not w[0].isupper()]
 
 def wd_freqs(parsed):
@@ -672,15 +672,52 @@ plot_bt_diffs(bootheights, 5, 1, subplt=2)
 sns.violinplot(data=bootheights);
 
 
-# # Conclusion
-
-# ## Epilogue: fun stats
-
-# #### Longest words
+# ## Part of Speech trends
+# 
+# Since spaCy automatically labels parts of speech, a last dimension I wanted to check was whether there is a change in POS usage across the books.
 
 # In[ ]:
 
-Series([tok.orth_ for bk in bktksall.values() for tok in bk if len(tok.orth_) > 20]).value_counts(normalize=0)
+def pos_counts(toks):
+    return Series(w.pos for w in toks).value_counts(normalize=0)
+
+
+# In[ ]:
+
+pos_stacked = (over_books(pos_counts)
+               .assign(POS=lambda x: x.index.map(pos_names.get))
+              .reset_index(drop=1))
+pos_stacked[:3]
+
+
+# I plotted below, in each box, the trendline for the part of speech frequency (I believe the correct POS abbreviation mapping is described [here](https://universaldependencies.github.io/docs/en/pos/all.html)). The first box shows, for example, that nouns go from being about 26.4% of the words in book 1, to accounting for less 26% of the words in the final book. While the trends are interesting, I don't see anything pop out at me other than the number (NUM) and symbol (SYM) frequencies, which are too small for me to draw any conclusions from. I'm also not sure what conclusions one could draw simply based on part of speech counts--does more complex writing tend to have more verbs or adjectives?
+
+# In[ ]:
+
+pos = pos_stacked.set_index(['POS', 'Book', ]).unstack().fillna(0)
+pos_norm = (pos / pos.sum() * 100).stack().reset_index(drop=0)
+pos_order = pos_norm.groupby('POS').Val.median().sort_values(ascending=0).index
+g = (sns.FacetGrid(pos_norm, col="POS", col_wrap=5, size=3, sharey=False, col_order=pos_order)
+     .map(sns.pointplot, 'Book', 'Val'))
+
+
+# # Conclusion
+# 
+# This analysis has presented several possible metrics for measuring reading complexity across the Harry Potter series. Measuring the average word length and sentence length revealed statistically significant increases as the series progressed. While looking at the share of repeated words didn't appear to show a major trend, there did seem to be a discernible increase in uncommon word usage, defined by how often words appear in external bodies of English text. While the increasing book length accounted for part of the increase in uncommon words, attempting to correct for the book length showed a surprisingly large gap between the average probability of words in book 1 versus the rest. That is, the first book had a much larger share of common (or, as some might argue, more basic) words.
+# 
+# I also examined the average depth of the syntax trees of the sentences in each book. The average depth and, to a greater extent, the maximum depth, showed an increase throughout the series. While the difference between each of the consecutive book wasn't enormous, the difference between the first and fifth was quite large.
+# 
+# While not every angle described an increasing complexity, such as the share of part of speech tags, there does seem to be enough evidence among these metrics to confirm that they do indicate an increasing complexity throughout the series.
+
+# ## Epilogue: fun stats
+
+# #### Longest words, ordered by frequency
+
+# In[ ]:
+
+longs = Series([tok.orth_ for bk in bktksall.values() for tok in bk if len(tok.orth_) > 18]).value_counts(normalize=0)
+for word, cnt in longs.items():
+    print('{}: {}'.format(cnt, word))
 
 
 # #### Longest unhyphenated words
@@ -703,189 +740,26 @@ show_graph(build_graph(sent))
 
 
 # #### Longest sentences
-# These seem to show some parsing issues, where a sequence of quick dialogue or lyrics are interpreted as a single sentence
+# These seem to show some parsing issues, where a sequence of quick dialogue or lyrics are interpreted as a single sentence. Here are the two longest ones, filtering the number of newlines:
 
 # In[ ]:
 
-get_ipython().system('date')
+for s in [sent for _, bk in sorted(bktksall.items())
+          for sent in bk.sents if (spanlen(sent) > 150) and
+          (Counter(sent.string).get('\n', 0) < 3)]:
+    print(Counter(s.string).get('\n', 0))
+    print(s, end='\n\n=======\n\n')
 
 
-# In[ ]:
-
-get_ipython().system('date')
-
+# And here are some of the longest ones according to the parser, though it appears to be a bit confused:
 
 # In[ ]:
 
 for s in [sent for _, bk in sorted(bktksall.items())[:5] for sent in bk.sents if spanlen(sent) > 200]:
-    print(s, end='\n=======\n')
+    print(s, end='\n\n=======\n\n')
 
 
 # In[ ]:
 
-wd_freqs(tt)
-
-
-# In[ ]:
-
-vcs = Series(Counter(reg_words(tt))).sort_values(ascending=False)
-bm = vcs.index.map(lambda x: len(x) > 3 and (x.lower() not in stops) and not x[0].isupper())
-vcs = vcs[bm]
-
-
-# In[ ]:
-
-R = 19
-DataFrame(list(z.partition(R, vcs.index[:R*20])))
-
-
-# In[ ]:
-
-sent_lens = pd.concat([sent_lens(v, i) for i, v in bktks.items()])
-
-
-# In[ ]:
-
-# Longest sentences
-Series().value_counts(normalize=0)
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-[tok for tok in bktks[5] if len(tok) > 40]
-
-
-# In[ ]:
-
-plt.figure(figsize=(16, 10))
-sns.boxplot(x='Book', y=0, data=wd_lens)
-
-
-# In[ ]:
-
-plt.figure(figsize=(16, 10))
-sns.boxplot(x='Book', y=0, data=sent_lens)
-
-
-# In[ ]:
-
-plt.figure(figsize=(16, 10))
-pt = sns.boxplot
-pt = sns.violinplot
-pt(x='Book', y=0, data=uncwds)
-# plt.ylim(0, 20)
-
-
-# In[ ]:
-
-sent_lens.groupby('Book')[0].median()
-
-
-# In[ ]:
-
-people = Series(ent.string.rstrip() for ent in tokens.ents if ent.label_ == 'PERSON')
-
-
-# In[ ]:
-
-pn[40:-40]
-
-
-# In[ ]:
-
-for ent in tokens.ents:
-    print(ent, ent.label_)
-
-
-# In[ ]:
-
-for tok in tokens[:40]:
-    print(tok, ps.NAMES[tok.pos])
-    1
-
-
-# #Find Characters
-
-# In[ ]:
-
-wds = tokens
-
-
-# In[ ]:
-
-caps = Series([tok.string.rstrip() for tok in tokens if tok.is_title and tok.pos == ps.NOUN])
-
-
-# In[ ]:
-
-import pandas as pd
-from pandas import Series, DataFrame
-
-
-# In[ ]:
-
-caps.
-
-
-# In[ ]:
-
-caps.value_counts(normalize=0)
-
-
-# In[ ]:
-
-tok.is_title
-
-
-# In[ ]:
-
-ps.PROPN
-
-
-# In[ ]:
-
-for pos in dir(ps)[8:]:
-    print(pos)
-    if pos.isupper():
-        int(getattr(ps, pos))
-
-
-# In[ ]:
-
-
-
-
-# In[ ]:
-
-[getattr(ps, pos) for pos in dir(ps) if pos.isupper()]
-
-
-# In[ ]:
-
-{getattr(ps, pos): pos for pos in dir(ps) if pos.isupper()}
-
-
-# In[ ]:
-
-tok
-
-
-# In[ ]:
-
-tok.pos
-
-
-# In[ ]:
-
-tokens
-
-
-# In[ ]:
-
-get_ipython().system('open /Users/williambeard/miniconda3/envs/hp/lib/python3.5/site-packages/spacy/en/')
+get_ipython().system('date')
 
