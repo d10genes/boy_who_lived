@@ -1,3 +1,3 @@
-# Boy whi lived
+# Boy who lived
 
 Main notebook file is `hp.ipynb`
